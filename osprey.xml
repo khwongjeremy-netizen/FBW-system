@@ -2,3 +2,10 @@
 <aircraft name ="CV-22 Osprey">
     <!--Source: USAF CV-22 Osprey facct sheet -->
     <!--https://www.af.mil/about-us/fact-sheets/display/article/104531/cv-22-osprey/ -->
+
+    <geometery>
+        <length unit="ft" source="USAF fact sheet">57 ft 4 in</length>
+        <height unit="ft" source="USAF fact sheet"> 22 ft 1 in</height>
+        <wingspan unit = "ft" source = "USAF fact sheet"> 83 ft 10 in</wingspan>
+        <rotor_diameter unit="ft" source="USAG fact sheet"> 38 ft</rotor_diamateter>
+    </geometry> 
