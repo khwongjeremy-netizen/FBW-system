@@ -50,7 +50,9 @@ terminal_horizontal_obstacle_clearance_ft = 25
 # Proprotor clearance and formation
 proprotor_tip_path_obstacle_clearance_ft = 25
 # Formation criterion is qualitative in the source; no numerical separation given
+'''
 formation_rotor_separation_reference = "Largest rotor span / rotor disk diameter"
+'''
 
 # Center of gravity operational limits
 basic_weight_cg_tolerance_in = 0.3
@@ -61,10 +63,12 @@ power_available_engine_reference_percent = 95
 power_available_mast_torque_reference_percent = 117
 hover_power_assurance_mgt_limit_percent = 95
 power_reconfirmation_margin_percent = 10
+"""
 vtol_approach_clear_escape_power_reference = "Out of Ground Effect (OGE) hover power"
 vtol_approach_restricted_escape_power_reference = "OGE hover power + 5%"
 vtol_departure_clear_escape_power_reference = "30-foot hover power"
 vtol_departure_restricted_escape_power_reference = "OGE hover power"
+"""
 
 # Nacelle mode thresholds
 # Helicopter/conversion mode: angle >= 60 deg; airplane mode: angle < 60 deg
