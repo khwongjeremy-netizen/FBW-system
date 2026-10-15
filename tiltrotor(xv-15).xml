@@ -1,0 +1,64 @@
+<article>https://www.nasa.gov/aeronautics/nasa-aircraft/xv-15-tiltrotor/ </article>
+<author>NASA<author>
+<date>SEP 11, 2003<date>
+<articlenum>1</articlenum>
+
+<article>https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf</article>
+<author>NASA<author> 
+<date>unavailable<date>
+<articlenum>2<articlenum>
+
+
+
+<!-- Physical data on the tiltrotor -->
+<xv-15>
+    <articlenum>#1</articlenum>
+        <!-- Physical parameters, measurements and specifications-->
+    <engines>2</engines>
+    <enginetype>twin Lycoming T-53 turboshaft engines</enginetype>
+    
+    <!--The two turboshaft engines are mounted onto the wingtips of the tiltrotor-->
+    <rotorblades>3</rotorblades>
+    <rotordiameter unit="ft">25</rotordiameter>
+    <conversionperiod unit="seconds"> 10-15</conversionperiod>
+    <crusiseduration unit="hours" mode="airplane">2+</cruiseduration>
+
+        <!-- Operational capabilities -->
+    <aircrafttype>VTOL</aircrafttype>
+    <takeoffmode>helicopter-style vertical takeoff</takeoffmode>
+    <payloaddelivery>true</payloaddelivery>
+    <fuelconsumption unit="percent" comparison="helicopter" mode="long-range">50</fuelconsumption>
+    <fuelefficiencythreshold unit="km">185</fuelefficiencythreshold>
+
+        <!--Weight-->
+    <designgross comment="designed operating weight of the aircraft" unit="lbs">13,000</designgross>
+    <maxgross comment="max operating weight of the aircraft" unit="lbs">15,000</maxgross>
+    <maxload unit="lbs"> 2,926</maxload>
+
+        <!--Dimesnions-->
+    <fuselagelength comment="nose tip to vertical fin tip" unit="ft">42.1</fuselagelength>
+    <rotorspan comment="tip to tip, max. diameter)" unit="ft"> 57.2</rotorspan>
+    <maxfinheight unit="ft">12.75</maxfinheight>
+
+        <!--Performance-->
+    <estimatedcruisespeed unit="mph">
+        345
+        <cruiseheight unit="ft">16,500</cruiseheight>
+    </estimatedcruisespeed>
+
+    <estimatedmaxspeed unit="mph">
+        375
+        <cruiseheight unit="ft">16,500</cruiseheight>
+    </estimatedmaxspeed>
+    <articlenum>#2</articlenum>
+        <!--Article section 2: aicraft dsicription-->
+    <forwardsweepofwings units="degrees">12<forwardsweepofwings>
+    <
+
+    
+
+
+
+
+
+</xv-15>
