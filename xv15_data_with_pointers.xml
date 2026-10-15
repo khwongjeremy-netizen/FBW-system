@@ -1,0 +1,995 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <sources>
+    <!--
+      - Identifies where the information came from.
+      - Use the source ID to trace values back to a reference.
+    -->
+    <source id="S1" title="XV-15 Tiltrotor" author="NASA" date="2003-09-11" url="https://www.nasa.gov/aeronautics/nasa-aircraft/xv-15-tiltrotor/">
+      <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+      <comment>
+        - Original NASA overview page.
+        - Several entries in the initial inventory were attributed to this source.
+      </comment>
+    </source>
+    <!--
+      - Identifies where the information came from.
+      - Use the source ID to trace values back to a reference.
+    -->
+    <source id="S2" title="NASA/Army XV-15 Tilt Rotor Research Aircraft Familiarization Document" author="NASA" date="1975-01" report="NASA TM-X-62407" url="https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf">
+      <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+      <comment>
+        - NotebookLM extraction identifies this as the source for the detailed engineering data below.
+        - Page and section references are recorded beside each value.
+        - Verify extracted values against the original report before treating them as validated model inputs.
+      </comment>
+    </source>
+  </sources>
+  <aircraft_overview source="S1">
+    <!--
+      - Broad aircraft category.
+      - VTOL means vertical takeoff and landing.
+    -->
+    <type>VTOL tiltrotor</type>
+    <!--
+      - Number of engines installed.
+      - Useful when estimating total available power.
+    -->
+    <engine_count>2</engine_count>
+    <!--
+      - Identifies the engine design.
+      - Use this when researching engine-specific limits.
+    -->
+    <engine_type>Twin Lycoming T-53 turboshaft engines</engine_type>
+    <!--
+      - Number of blades on each rotor.
+      - Part of the rotor's physical geometry.
+    -->
+    <rotor_blade_count>3</rotor_blade_count>
+    <!--
+      - Width of one rotor from tip to tip.
+      - Used to determine rotor-disc size.
+    -->
+    <rotor_diameter unit="ft">25</rotor_diameter>
+    <!--
+      - Reported time to change flight configuration.
+      - Describes the transition between hover and airplane modes.
+    -->
+    <conversion_time unit="s">10-15</conversion_time>
+    <!--
+      - Reported time available for cruise.
+      - Depends on the conditions stated by the source.
+    -->
+    <cruise_duration mode="airplane" unit="h">2+</cruise_duration>
+    <!--
+      - Records vertical takeoff capability.
+      - This is a capability flag, not a force value.
+    -->
+    <vertical_takeoff>true</vertical_takeoff>
+    <!--
+      - Records whether payload delivery is listed as a capability.
+      - It does not specify a payload-weight limit.
+    -->
+    <payload_delivery_capability>true</payload_delivery_capability>
+    <!--
+      - Fuel-consumption comparison from the inventory.
+      - Check the original context before using it in calculations.
+    -->
+    <long_range_fuel_consumption comparison="helicopter" unit="percent">50</long_range_fuel_consumption>
+    <!--
+      - Distance threshold listed for fuel efficiency.
+      - Confirm the source's definition before modelling it.
+    -->
+    <fuel_efficiency_threshold unit="km">185</fuel_efficiency_threshold>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - These are retained from the original inventory, not independently validated here.
+      - Terms such as “fuel efficiency threshold” and the 50 percent comparison need their original context checked.
+    </comment>
+  </aircraft_overview>
+  <mass_properties>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="design_gross" unit="lb" source="S2" location="p. 5, sec. 3.1.1">13000</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="maximum_gross_STOL" unit="lb" source="S2" location="p. 5, sec. 3.1.1">15000</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="basic_empty" unit="lb" source="S2" location="p. 5, sec. 3.1.1; p. 11">9076</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="research_mission_empty" unit="lb" source="S2" location="p. 5, sec. 3.1.1; p. 11">10073</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="useful_load" unit="lb" source="S2" location="p. 11, sec. 3.1.2">2927</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="maximum_fuel_load" unit="lb" source="S2" location="p. 11, sec. 3.1.2">1490</weight>
+    <!--
+      - Breaks useful load into listed categories.
+      - Each child item records one category's weight.
+    -->
+    <useful_load_breakdown source="S2" location="p. 11, sec. 3.1.2">
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="crew" unit="lb">400</item>
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="fuel" unit="lb">1490</item>
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="oil_and_fluids" unit="lb">138</item>
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="payload" unit="lb">899</item>
+    </useful_load_breakdown>
+    <!--
+      - Groups weights by aircraft subsystem.
+      - Useful for seeing how the aircraft's weight is distributed.
+    -->
+    <component_weights source="S2" location="p. 5 and p. 11, sec. 3.1.2">
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="rotor_system_group" unit="lb">1070</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="wing_group" unit="lb">873</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="tail_group" unit="lb">209</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="fuselage_group" unit="lb">1442</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="landing_gear_group" unit="lb">508</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="hydraulics_and_flight_controls_group" unit="lb">934</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="powerplant_group" unit="lb">1754</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="transmission_and_conversion_group" unit="lb">1263</weight>
+    </component_weights>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - “Weight” values are kept in the report's stated lb units; do not silently treat them as mass in a physics equation.
+      - The report's useful-load breakdown and the reported total should be checked for arithmetic/context before use.
+    </comment>
+  </mass_properties>
+  <!--
+      - Describes resistance to rotational acceleration.
+      - Values depend on axis and flight mode.
+    -->
+  <mass_moments_of_inertia source="S2" condition="gross_weight_13000_lb" location="p. 12, sec. 3.1.3">
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="roll" symbol="Ixx" mode="airplane" unit="slug*ft^2">40500</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="roll" symbol="Ixx" mode="helicopter" unit="slug*ft^2">42400</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="pitch" symbol="Iyy" mode="airplane" unit="slug*ft^2">13200</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="pitch" symbol="Iyy" mode="helicopter" unit="slug*ft^2">14300</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="yaw" symbol="Izz" mode="airplane" unit="slug*ft^2">50300</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="yaw" symbol="Izz" mode="helicopter" unit="slug*ft^2">49500</inertia>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - The extracted source provides separate values for airplane and helicopter modes.
+      - No values for intermediate nacelle angles were identified in this extraction.
+    </comment>
+  </mass_moments_of_inertia>
+  <!--
+      - Groups major aircraft dimensions.
+      - Check each measurement's definition before comparing values.
+    -->
+  <geometry>
+    <!--
+      - Records the fuselage length.
+      - Check the note for the measurement endpoints.
+    -->
+    <fuselage length="42.1" length_unit="ft" source="S1" note="Initial inventory describes nose tip to vertical-fin tip." />
+    <!--
+      - Overall rotor tip-to-tip dimension from the initial inventory.
+      - Not the same as wing span between rotor centres.
+    -->
+    <rotor_tip_to_tip_span value="57.2" unit="ft" source="S1" note="Initial inventory; definition needs checking in source." />
+    <!--
+      - Records the maximum fin height.
+      - Useful for the aircraft's overall geometry.
+    -->
+    <maximum_fin_height value="12.75" unit="ft" source="S1" />
+    <!--
+      - Groups wing shape and size measurements.
+      - Wing geometry influences aerodynamic forces and moments.
+    -->
+    <wing source="S2" location="p. 12, sec. 3.3">
+      <!--
+      - Surface area of the named wing or tail.
+      - Used in aerodynamic force calculations.
+    -->
+      <area unit="ft^2">169.0</area>
+      <!--
+      - Span of the named surface or dimension.
+      - Read the definition attribute when present.
+    -->
+      <span unit="ft" definition="distance between rotor centerlines at tilt axis">32.17</span>
+      <!--
+      - Front-to-back length of an aerodynamic surface.
+      - For rotor blades, chord means blade width.
+    -->
+      <chord unit="ft" definition="constant chord">5.25</chord>
+      <!--
+      - Describes surface proportions using span and area/chord.
+      - It can affect aerodynamic behaviour.
+    -->
+      <aspect_ratio>6.12</aspect_ratio>
+      <!--
+      - Mounting angle of the named surface.
+      - Not the same as aircraft angle of attack.
+    -->
+      <incidence unit="deg">3.0</incidence>
+      <!--
+      - Angle of the wing as it extends outward.
+      - Can affect lateral stability.
+    -->
+      <dihedral unit="deg">2.0</dihedral>
+      <!--
+      - Sweep angle measured along the quarter-chord line.
+      - Use the recorded sign convention.
+    -->
+      <quarter_chord_sweep unit="deg" convention="negative indicates forward sweep">-6.5</quarter_chord_sweep>
+      <!--
+      - Identifies the surface's cross-sectional profile.
+      - Different profiles have different aerodynamic properties.
+    -->
+      <airfoil>NACA 64A223 (Mod)</airfoil>
+    </wing>
+    <!--
+      - Groups horizontal stabilizer dimensions.
+      - The tail contributes to pitch stability and control.
+    -->
+    <horizontal_tail source="S2" location="p. 12, sec. 3.3">
+      <!--
+      - Surface area of the named wing or tail.
+      - Used in aerodynamic force calculations.
+    -->
+      <area unit="ft^2">50.25</area>
+      <!--
+      - Span of the named surface or dimension.
+      - Read the definition attribute when present.
+    -->
+      <span unit="ft">12.83</span>
+      <!--
+      - Front-to-back length of an aerodynamic surface.
+      - For rotor blades, chord means blade width.
+    -->
+      <chord unit="ft">3.92</chord>
+      <!--
+      - Describes surface proportions using span and area/chord.
+      - It can affect aerodynamic behaviour.
+    -->
+      <aspect_ratio>3.27</aspect_ratio>
+      <!--
+      - Records the reported tail-incidence adjustment range.
+      - Flight and ground ranges are listed separately.
+    -->
+      <incidence_adjustment unit="deg" flight_adjustment="0 to +6" ground_adjustment="leading edge up -20 to leading edge down +10" />
+      <!--
+      - Identifies the surface's cross-sectional profile.
+      - Different profiles have different aerodynamic properties.
+    -->
+      <airfoil>NACA 64A015</airfoil>
+      <!--
+      - Distance to the named tail surface.
+      - Used when relating force to rotational moment.
+    -->
+      <moment_arm unit="ft">22.4</moment_arm>
+    </horizontal_tail>
+    <!--
+      - Groups vertical stabilizer dimensions.
+      - The tail contributes to directional stability and yaw control.
+    -->
+    <vertical_tail source="S2" location="p. 12, sec. 3.3">
+      <!--
+      - Total area of the named surface.
+      - Check whether the source counts one surface or both.
+    -->
+      <total_area unit="ft^2" definition="both fins">50.5</total_area>
+      <!--
+      - Span of the named surface or dimension.
+      - Read the definition attribute when present.
+    -->
+      <span unit="ft">7.68</span>
+      <!--
+      - Chord at the tail's root, where it joins the aircraft.
+    -->
+      <root_chord unit="ft">4.09</root_chord>
+      <!--
+      - Chord at the outer tip of the tail.
+    -->
+      <tip_chord unit="ft">2.40</tip_chord>
+      <!--
+      - Representative chord used in aerodynamic calculations.
+    -->
+      <mean_aerodynamic_chord unit="ft">3.72</mean_aerodynamic_chord>
+      <!--
+      - Describes surface proportions using span and area/chord.
+      - It can affect aerodynamic behaviour.
+    -->
+      <aspect_ratio>2.33</aspect_ratio>
+      <!--
+      - Sweep angle measured along the quarter-chord line.
+      - Use the recorded sign convention.
+    -->
+      <quarter_chord_sweep unit="deg">31.6</quarter_chord_sweep>
+      <!--
+      - Identifies the surface's cross-sectional profile.
+      - Different profiles have different aerodynamic properties.
+    -->
+      <airfoil>NACA 0009</airfoil>
+      <!--
+      - Distance to the named tail surface.
+      - Used when relating force to rotational moment.
+    -->
+      <moment_arm unit="ft">23.2</moment_arm>
+    </vertical_tail>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - Geometric span definitions matter: wing span here is between rotor centerlines, while the initial 57.2 ft value is a tip-to-tip dimension.
+      - Do not treat these two span values as competing measurements of the same dimension.
+    </comment>
+  </geometry>
+  <!--
+      - Groups movable aerodynamic surfaces and their limits.
+      - These surfaces help change aircraft attitude and direction.
+    -->
+  <control_surfaces source="S2">
+    <!--
+      - High-lift surface that changes wing lift and drag.
+    -->
+    <flap location="p. 14, sec. 3.4">
+      <!--
+      - Total area of the named surface.
+      - Check whether the source counts one surface or both.
+    -->
+      <total_area unit="ft^2" definition="area aft of hinge, both panels">11.0</total_area>
+    </flap>
+    <!--
+      - Combines flap and aileron functions.
+      - Can contribute to lift and roll control.
+    -->
+    <flaperon location="p. 14, sec. 3.4">
+      <!--
+      - Total area of the named surface.
+      - Check whether the source counts one surface or both.
+    -->
+      <total_area unit="ft^2" definition="area aft of hinge, both panels">20.2</total_area>
+      <!--
+      - Reported upward deflection limit for roll control.
+      - Confirm the source's sign convention.
+    -->
+      <roll_travel_up unit="deg">23.8</roll_travel_up>
+      <!--
+      - Reported downward deflection limit for roll control.
+      - Confirm the source's sign convention.
+    -->
+      <roll_travel_down unit="deg">13.8</roll_travel_down>
+      <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+      <comment>- NotebookLM describes these as limits during conversion; confirm the exact sign convention in the figure.</comment>
+    </flaperon>
+    <!--
+      - Movable tail surface used mainly for pitch control.
+    -->
+    <elevator location="p. 14, sec. 3.4">
+      <!--
+      - Total area of the named surface.
+      - Check whether the source counts one surface or both.
+    -->
+      <total_area unit="ft^2" definition="area aft of hinge">13.0</total_area>
+      <!--
+      - Reported movement or deflection range.
+      - The unit attribute gives the measurement unit.
+    -->
+      <travel unit="deg">±20</travel>
+    </elevator>
+    <!--
+      - Movable vertical-tail surface used mainly for yaw control.
+    -->
+    <rudder location="p. 14, sec. 3.4">
+      <!--
+      - Total area of the named surface.
+      - Check whether the source counts one surface or both.
+    -->
+      <total_area unit="ft^2" definition="area aft of hinge, total">7.5</total_area>
+      <!--
+      - Reported movement or deflection range.
+      - The unit attribute gives the measurement unit.
+    -->
+      <travel unit="deg">±20</travel>
+    </rudder>
+    <!--
+      - Groups physical travel ranges for pilot controls.
+      - These are input movements, not aircraft response values.
+    -->
+    <pilot_controls source="S2" location="table 8.3.1, p. 61">
+      <!--
+      - Forward/backward movement of the control stick.
+      - Commonly associated with pitch commands.
+    -->
+      <stick_fore_aft_travel unit="in">±4.8</stick_fore_aft_travel>
+      <!--
+      - Side-to-side movement of the control stick.
+      - Commonly associated with roll commands.
+    -->
+      <stick_lateral_travel unit="in">±4.8</stick_lateral_travel>
+      <!--
+      - Physical travel of the collective/power lever.
+      - Do not confuse travel distance with engine power.
+    -->
+      <collective_power_lever_travel unit="in">10.0</collective_power_lever_travel>
+      <!--
+      - Foot-pedal movement range.
+      - Commonly associated with yaw commands.
+    -->
+      <pedal_travel unit="in">±2.5</pedal_travel>
+    </pilot_controls>
+  </control_surfaces>
+  <!--
+      - Groups rotor and drivetrain specifications.
+      - Proprotors provide lift in hover and thrust in forward flight.
+    -->
+  <proprotor_and_drive_system source="S2">
+    <!--
+      - Number of blades attached to each rotor hub.
+    -->
+    <rotor_blades_per_hub location="p. 17, sec. 3.7">3</rotor_blades_per_hub>
+    <!--
+      - Width of one rotor from tip to tip.
+      - Used to determine rotor-disc size.
+    -->
+    <rotor_diameter unit="ft" location="p. 17, sec. 3.7">25.0</rotor_diameter>
+    <!--
+      - Area swept by one rotating rotor.
+      - Useful for rotor-loading calculations.
+    -->
+    <rotor_disc_area_per_rotor unit="ft^2" location="p. 17, sec. 3.7">491</rotor_disc_area_per_rotor>
+    <!--
+      - Front-to-back width of a rotor blade.
+    -->
+    <blade_chord unit="in" location="p. 17, sec. 3.7">14.0</blade_chord>
+    <!--
+      - Describes blade area relative to rotor-disc area.
+      - Keep the source's definition when using it.
+    -->
+    <rotor_solidity location="p. 17, sec. 3.7">0.089</rotor_solidity>
+    <!--
+      - Preset blade angle at the hub relative to the rotor plane.
+    -->
+    <hub_precone_angle unit="deg" location="p. 17, sec. 3.7">2.5</hub_precone_angle>
+    <!--
+      - Describes coupling between blade pitch and flapping.
+      - Keep the source's angle convention.
+    -->
+    <pitch_flap_coupling_angle symbol="delta3" unit="deg" location="p. 17, sec. 3.7; p. 46">-15.0</pitch_flap_coupling_angle>
+    <!--
+      - Reported mechanical limit on rotor-blade flapping.
+    -->
+    <mechanical_flapping_limit unit="deg" location="p. 17, sec. 3.7">±12</mechanical_flapping_limit>
+    <!--
+      - Speed ratio between engine and rotor mast.
+      - Relates engine speed to rotor speed.
+    -->
+    <gear_ratio_engine_to_rotor_mast location="table 4.5, p. 25">35.11:1</gear_ratio_engine_to_rotor_mast>
+    <!--
+      - Reported gear ratio for the wing interconnect drive.
+      - Part of the drivetrain speed relationship.
+    -->
+    <gear_ratio_interconnect_shaft location="table 4.5, p. 25">3.10:1</gear_ratio_interconnect_shaft>
+    <!--
+      - Rotor speed for the named design mode.
+      - Mode and tip speed are recorded as attributes.
+    -->
+    <design_rotor_speed mode="hover" unit="rpm" tip_speed="740 ft/s" location="table 4.5, p. 25; p. 19">565</design_rotor_speed>
+    <!--
+      - Rotor speed for the named design mode.
+      - Mode and tip speed are recorded as attributes.
+    -->
+    <design_rotor_speed mode="cruise" unit="rpm" tip_speed="600 ft/s" location="table 4.5, p. 25; p. 19">458</design_rotor_speed>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - The rotor-disc area is reported per rotor.
+      - RPM and tip-speed values are tied to the stated design modes; do not assume one RPM applies throughout conversion.
+    </comment>
+  </proprotor_and_drive_system>
+  <!--
+      - Groups engine power and fuel-use figures.
+      - Ratings depend on the stated operating conditions.
+    -->
+  <engine_data source="S2" engine_description="Lycoming LTC1K-4K / T53-L-13B Mod" location="sec. 6.2, p. 37">
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="contingency" unit="SHP" duration="2 min" condition="sea-level standard day">1802</power_rating>
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="takeoff" unit="SHP" duration="10 min" condition="sea-level standard day">1550</power_rating>
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="military" unit="SHP" duration="30 min" condition="sea-level standard day">1401</power_rating>
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="normal_continuous" unit="SHP" condition="sea-level standard day">1250</power_rating>
+    <!--
+      - Fuel used per unit of power per hour.
+      - Compare values only under similar conditions.
+    -->
+    <specific_fuel_consumption name="contingency" unit="lb/(SHP*h)">0.564</specific_fuel_consumption>
+    <!--
+      - Fuel used per unit of power per hour.
+      - Compare values only under similar conditions.
+    -->
+    <specific_fuel_consumption name="takeoff" unit="lb/(SHP*h)">0.584</specific_fuel_consumption>
+    <!--
+      - Fuel used per unit of power per hour.
+      - Compare values only under similar conditions.
+    -->
+    <specific_fuel_consumption name="normal_continuous" unit="lb/(SHP*h)">0.622</specific_fuel_consumption>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>- Rating names, durations, and values are transcribed from the NotebookLM extraction; check the report table before relying on them.</comment>
+  </engine_data>
+  <!--
+      - Groups reported hover control-response figures.
+      - Values apply to the listed weight and centre-of-gravity conditions.
+    -->
+  <hover_control_response source="S2" condition="gross_weight_13000_lb; aft_CG; unless_noted" location="table 8.3.2, p. 62">
+    <!--
+      - Angular-acceleration response per inch of control movement.
+      - Axis and SCAS state identify the case.
+    -->
+    <control_sensitivity axis="pitch" scas="off" unit="rad/s^2/in">0.350</control_sensitivity>
+    <!--
+      - Angular-acceleration response per inch of control movement.
+      - Axis and SCAS state identify the case.
+    -->
+    <control_sensitivity axis="roll" scas="off" unit="rad/s^2/in">0.471</control_sensitivity>
+    <!--
+      - Angular-acceleration response per inch of control movement.
+      - Axis and SCAS state identify the case.
+    -->
+    <control_sensitivity axis="yaw" scas="off" unit="rad/s^2/in">0.132</control_sensitivity>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="pitch" scas="off" unit="1/s">0.85</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="pitch" scas="on" unit="1/s">1.54</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="roll" scas="off" unit="1/s">0.77</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="roll" scas="on" unit="1/s">1.82</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="yaw" scas="off" unit="1/s">0.116</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="yaw" scas="on" unit="1/s">2.5</damping>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - SCAS means Stability and Control Augmentation System in the extracted report context.
+      - These are condition-specific response figures, not necessarily universal constants or complete control laws.
+    </comment>
+  </hover_control_response>
+  <!--
+      - Groups equations and relationships from the report.
+      - Check their conditions before applying them.
+    -->
+  <reported_relationships source="S2">
+    <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+    <relationship name="hover_wing_download_loss" location="sec. 5.1, p. 26">
+      <!--
+      - Equation transcribed from the source extraction.
+      - Check symbols and assumptions before coding it.
+    -->
+      <equation>T_loss / T_total = 0.07</equation>
+      <!--
+      - Plain-language explanation of the equation.
+      - Connects the formula to the described behaviour.
+    -->
+      <meaning>In hover out of ground effect, rotor downwash striking the wing reduces effective hover lift by 7 percent.</meaning>
+      <!--
+      - Operating condition attached to a rating or relationship.
+    -->
+      <condition>Flaps and flaperons fully deflected downward.</condition>
+    </relationship>
+    <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+    <relationship name="transmission_efficiency" location="sec. 5.1, p. 26">
+      <!--
+      - Equation transcribed from the source extraction.
+      - Check symbols and assumptions before coding it.
+    -->
+      <equation>P_rotor = eta_xmsn * P_engine; eta_xmsn = 0.93</equation>
+      <!--
+      - Plain-language explanation of the equation.
+      - Connects the formula to the described behaviour.
+    -->
+      <meaning>Net power delivered to the rotor masts is reported as 93 percent of engine power.</meaning>
+    </relationship>
+    <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+    <relationship name="hover_thrust_margin" location="sec. 5.2, p. 26">
+      <!--
+      - Equation transcribed from the source extraction.
+      - Check symbols and assumptions before coding it.
+    -->
+      <equation>U_T / W = 1.1</equation>
+      <!--
+      - Plain-language explanation of the equation.
+      - Connects the formula to the described behaviour.
+    -->
+      <meaning>Hover research performance limit includes a 10 percent thrust margin over weight.</meaning>
+    </relationship>
+  </reported_relationships>
+  <!--
+      - Groups speed estimates from the initial inventory.
+      - Verify their definitions and conditions before use.
+    -->
+  <performance_inventory source="S1">
+    <!--
+      - Recorded cruise-speed estimate.
+      - The associated altitude is included below.
+    -->
+    <cruise_speed unit="mph" altitude_unit="ft" status="estimated">345
+      <!--
+      - Altitude associated with the speed estimate.
+      - Units are specified by the parent tag.
+    -->
+      <altitude>16500</altitude>
+    </cruise_speed>
+    <!--
+      - Recorded maximum-speed estimate.
+      - Do not assume it applies to every flight configuration.
+    -->
+    <maximum_speed unit="mph" altitude_unit="ft" status="estimated">375
+      <!--
+      - Altitude associated with the speed estimate.
+      - Units are specified by the parent tag.
+    -->
+      <altitude>16500</altitude>
+    </maximum_speed>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>- Retained from the initial inventory. Verify definitions, flight configuration, and source context before using in calculations.</comment>
+  </performance_inventory>
+  <!--
+      - Summaries of useful relationships shown in report figures.
+      - These are not full numerical lookup tables.
+    -->
+  <reported_figures source="S2">
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="CG_limits" location="fig. 3.2.1, p. 13">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Permissible gross weight, 8000 to 15000 lb, versus fuselage station, FS 286 to FS 306 in.</relationship>
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extraction describes gear-retraction forward/aft limits and an achievable CG range around FS 292 to FS 302 in.</finding>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="flaperon_vs_flap" location="fig. 3.4.1, p. 15">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Flaperon roll-deflection limits versus flap setting, described from -20 deg up to +80 deg down.</relationship>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="conversion_corridor" location="fig. 5.4.1, p. 29">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Nacelle angle 0 to 90 deg versus true airspeed 0 to 320 kt.</relationship>
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extraction notes about 70 kt at 60 deg tilt as a left-boundary example; reported cruise torque/structural speeds are V_C = 170 kt and V_D = 189 kt.</finding>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="conversion_power_required" location="fig. 5.4.2, p. 29">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Power required divided by takeoff power available versus airspeed.</relationship>
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extraction describes a bucket-shaped trend, with a minimum near 80 kt and power ratio around 0.28 at nacelle angles 60 to 75 deg; hover ratio is described as about 0.65.</finding>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="drive_system_frequencies" location="fig. 7.1.3, p. 50">
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extracted frequencies: first asymmetric interconnect-shaft mode 0.39/0.48 per rev; first symmetric power-turbine mode 1.26/1.55 per rev.</finding>
+    </figure>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>- Figure summaries are descriptions from NotebookLM, not digitized data points. Do not turn plotted trends into precise lookup tables without inspecting the original figures.</comment>
+  </reported_figures>
+  <!--
+      - Stores system descriptions rather than numeric parameters.
+      - Useful when planning simulation logic.
+    -->
+  <qualitative_system_behaviour source="S2">
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="control_phasing">As nacelle angle changes from 90 deg helicopter mode to 0 deg airplane mode, control inputs are mixed between rotor cyclic/collective pitch and aerodynamic surfaces through mechanical linkages.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="hover_roll_control">Hover roll is described as using differential rotor collective pitch.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="hover_yaw_control">Hover yaw is described as using differential longitudinal cyclic pitch, tilting the proprotor axes in opposite directions.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="cross_shaft">The wing interconnect driveshaft synchronizes rotor speed and can allow either engine to drive both rotors after a single-engine failure.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="rotor_resonance">The lowest blade in-plane natural frequency is described as above the one-per-revolution operating speed.</item>
+  </qualitative_system_behaviour>
+  <!--
+      - Lists parameters not found in this source extraction.
+      - Missing values should remain unknown rather than guessed.
+    -->
+  <data_gaps source="S2">
+    <!--
+      - One identified limitation in the available data.
+    -->
+    <gap>Three-axis mass moments of inertia at intermediate nacelle angles were not identified; extracted values are for airplane and helicopter modes only.</gap>
+    <!--
+      - One identified limitation in the available data.
+    -->
+    <gap>Full nonlinear aerodynamic coefficient curves, including CL, CD, and Cm across angle of attack, were not identified.</gap>
+    <!--
+      - One identified limitation in the available data.
+    -->
+    <gap>Numerical unsteady rotor-wake flowfield tables during conversion were not identified.</gap>
+  </data_gaps>
+  <!--
+      - Collects values or definitions that need checking.
+      - Resolve these before relying on affected values.
+    -->
+  <review_flags>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R1" severity="check" parameters="useful_load">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S1" value="2926" unit="lb" meaning="initial inventory calls this max load" />
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="2927" unit="lb" meaning="report extraction calls this useful load at 13000 lb gross weight" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>Keep both source claims visible until their definitions and original locations are checked; do not overwrite one with the other.</action>
+    </flag>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R2" severity="check" parameters="wing_sweep">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S1" value="12" unit="deg" meaning="initial inventory calls this wing forward sweep; exact definition unclear" />
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="-6.5" unit="deg" meaning="quarter-chord sweep, negative sign indicates forward sweep" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>These may refer to different sweep definitions or a transcription issue. Inspect both original sources before choosing a model value.</action>
+    </flag>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R3" severity="check" parameters="engine_power_ratings">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="1802 SHP" meaning="2-minute contingency rating" />
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="1550 SHP" meaning="10-minute takeoff rating" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>NotebookLM transcribed these labels and values; verify against the source table because they may be easy to misread or misassociate.</action>
+    </flag>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R4" severity="check" parameters="useful_load_breakdown">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="400 + 1490 + 138 + 899 = 2927 lb" meaning="crew + fuel + oil/fluids + payload" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>The listed components sum to 2927 lb, matching the extracted useful-load total; verify that the categories are defined as mutually exclusive in the report.</action>
+    </flag>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - “Check” flags are unresolved verification tasks, not claims that the source is wrong.
+      - Keep source values separate until you have checked the original page/table.
+    </comment>
+  </review_flags>
+</xv15_dataset>
