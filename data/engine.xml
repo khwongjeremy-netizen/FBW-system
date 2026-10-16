@@ -1,0 +1,50 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Groups engine power and fuel-use figures.
+      - Ratings depend on the stated operating conditions.
+    -->
+  <engine_data source="S2" engine_description="Lycoming LTC1K-4K / T53-L-13B Mod" location="sec. 6.2, p. 37">
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="contingency" unit="SHP" duration="2 min" condition="sea-level standard day">1802</power_rating>
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="takeoff" unit="SHP" duration="10 min" condition="sea-level standard day">1550</power_rating>
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="military" unit="SHP" duration="30 min" condition="sea-level standard day">1401</power_rating>
+    <!--
+      - Engine power rating for a named limit and duration.
+      - Check its condition before comparing ratings.
+    -->
+    <power_rating name="normal_continuous" unit="SHP" condition="sea-level standard day">1250</power_rating>
+    <!--
+      - Fuel used per unit of power per hour.
+      - Compare values only under similar conditions.
+    -->
+    <specific_fuel_consumption name="contingency" unit="lb/(SHP*h)">0.564</specific_fuel_consumption>
+    <!--
+      - Fuel used per unit of power per hour.
+      - Compare values only under similar conditions.
+    -->
+    <specific_fuel_consumption name="takeoff" unit="lb/(SHP*h)">0.584</specific_fuel_consumption>
+    <!--
+      - Fuel used per unit of power per hour.
+      - Compare values only under similar conditions.
+    -->
+    <specific_fuel_consumption name="normal_continuous" unit="lb/(SHP*h)">0.622</specific_fuel_consumption>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>- Rating names, durations, and values are transcribed from the NotebookLM extraction; check the report table before relying on them.</comment>
+  </engine_data>
+</xv15_dataset>
+  <!-- Why is power_rating the name for tehse variables?  what does that mean and hwa tdo these units mean? are they operating parameters of the engines?-->

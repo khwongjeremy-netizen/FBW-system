@@ -1,0 +1,85 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Collects values or definitions that need checking.
+      - Resolve these before relying on affected values.
+    -->
+  <review_flags>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R1" severity="check" parameters="useful_load">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S1" value="2926" unit="lb" meaning="initial inventory calls this max load" />
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="2927" unit="lb" meaning="report extraction calls this useful load at 13000 lb gross weight" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>Keep both source claims visible until their definitions and original locations are checked; do not overwrite one with the other.</action>
+    </flag>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R2" severity="check" parameters="wing_sweep">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S1" value="12" unit="deg" meaning="initial inventory calls this wing forward sweep; exact definition unclear" />
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="-6.5" unit="deg" meaning="quarter-chord sweep, negative sign indicates forward sweep" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>These may refer to different sweep definitions or a transcription issue. Inspect both original sources before choosing a model value.</action>
+    </flag>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R3" severity="check" parameters="engine_power_ratings">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="1802 SHP" meaning="2-minute contingency rating" />
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="1550 SHP" meaning="10-minute takeoff rating" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>NotebookLM transcribed these labels and values; verify against the source table because they may be easy to misread or misassociate.</action>
+    </flag>
+    <!--
+      - One unresolved verification issue.
+      - The ID makes it easy to refer to this issue.
+    -->
+    <flag id="R4" severity="check" parameters="useful_load_breakdown">
+      <!--
+      - One source's version of a disputed or uncertain value.
+    -->
+      <entry source="S2" value="400 + 1490 + 138 + 899 = 2927 lb" meaning="crew + fuel + oil/fluids + payload" />
+      <!--
+      - Suggested verification step for the issue.
+    -->
+      <action>The listed components sum to 2927 lb, matching the extracted useful-load total; verify that the categories are defined as mutually exclusive in the report.</action>
+    </flag>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - “Check” flags are unresolved verification tasks, not claims that the source is wrong.
+      - Keep source values separate until you have checked the original page/table.
+    </comment>
+  </review_flags>
+</xv15_dataset>

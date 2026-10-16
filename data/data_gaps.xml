@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Lists parameters not found in this source extraction.
+      - Missing values should remain unknown rather than guessed.
+    -->
+  <data_gaps source="S2">
+    <!--
+      - One identified limitation in the available data.
+    -->
+    <gap>Three-axis mass moments of inertia at intermediate nacelle angles were not identified; extracted values are for airplane and helicopter modes only.</gap>
+    <!--
+      - One identified limitation in the available data.
+    -->
+    <gap>Full nonlinear aerodynamic coefficient curves, including CL, CD, and Cm across angle of attack, were not identified.</gap>
+    <!--
+      - One identified limitation in the available data.
+    -->
+    <gap>Numerical unsteady rotor-wake flowfield tables during conversion were not identified.</gap>
+  </data_gaps>
+</xv15_dataset>

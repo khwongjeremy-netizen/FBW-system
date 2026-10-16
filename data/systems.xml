@@ -1,0 +1,34 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Stores system descriptions rather than numeric parameters.
+      - Useful when planning simulation logic.
+    -->
+  <qualitative_system_behaviour source="S2">
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="control_phasing">As nacelle angle changes from 90 deg helicopter mode to 0 deg airplane mode, control inputs are mixed between rotor cyclic/collective pitch and aerodynamic surfaces through mechanical linkages.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="hover_roll_control">Hover roll is described as using differential rotor collective pitch.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="hover_yaw_control">Hover yaw is described as using differential longitudinal cyclic pitch, tilting the proprotor axes in opposite directions.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="cross_shaft">The wing interconnect driveshaft synchronizes rotor speed and can allow either engine to drive both rotors after a single-engine failure.</item>
+    <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+    <item name="rotor_resonance">The lowest blade in-plane natural frequency is described as above the one-per-revolution operating speed.</item>
+  </qualitative_system_behaviour>
+</xv15_dataset>

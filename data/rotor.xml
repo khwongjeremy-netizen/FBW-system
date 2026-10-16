@@ -1,0 +1,73 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Groups rotor and drivetrain specifications.
+      - Proprotors provide lift in hover and thrust in forward flight.
+    -->
+  <proprotor_and_drive_system source="S2">
+    <!--
+      - Number of blades attached to each rotor hub.
+    -->
+    <rotor_blades_per_hub location="p. 17, sec. 3.7">3</rotor_blades_per_hub>
+    <!--
+      - Width of one rotor from tip to tip.
+      - Used to determine rotor-disc size.
+    -->
+    <rotor_diameter unit="ft" location="p. 17, sec. 3.7">25.0</rotor_diameter>
+    <!--
+      - Area swept by one rotating rotor.
+      - Useful for rotor-loading calculations.
+    -->
+    <rotor_disc_area_per_rotor unit="ft^2" location="p. 17, sec. 3.7">491</rotor_disc_area_per_rotor>
+    <!--
+      - Front-to-back width of a rotor blade.
+    -->
+    <blade_chord unit="in" location="p. 17, sec. 3.7">14.0</blade_chord>
+    <!--
+      - Describes blade area relative to rotor-disc area.
+      - Keep the source's definition when using it.
+    -->
+    <rotor_solidity location="p. 17, sec. 3.7">0.089</rotor_solidity>
+    <!--
+      - Preset blade angle at the hub relative to the rotor plane.
+    -->
+    <hub_precone_angle unit="deg" location="p. 17, sec. 3.7">2.5</hub_precone_angle>
+    <!--
+      - Describes coupling between blade pitch and flapping.
+      - Keep the source's angle convention.
+    -->
+    <pitch_flap_coupling_angle symbol="delta3" unit="deg" location="p. 17, sec. 3.7; p. 46">-15.0</pitch_flap_coupling_angle>
+    <!--
+      - Reported mechanical limit on rotor-blade flapping.
+    -->
+    <mechanical_flapping_limit unit="deg" location="p. 17, sec. 3.7">±12</mechanical_flapping_limit>
+    <!--
+      - Speed ratio between engine and rotor mast.
+      - Relates engine speed to rotor speed.
+    -->
+    <gear_ratio_engine_to_rotor_mast location="table 4.5, p. 25">35.11:1</gear_ratio_engine_to_rotor_mast>
+    <!--
+      - Reported gear ratio for the wing interconnect drive.
+      - Part of the drivetrain speed relationship.
+    -->
+    <gear_ratio_interconnect_shaft location="table 4.5, p. 25">3.10:1</gear_ratio_interconnect_shaft>
+    <!--
+      - Rotor speed for the named design mode.
+      - Mode and tip speed are recorded as attributes.
+    -->
+    <design_rotor_speed mode="hover" unit="rpm" tip_speed="740 ft/s" location="table 4.5, p. 25; p. 19">565</design_rotor_speed>
+    <!--
+      - Rotor speed for the named design mode.
+      - Mode and tip speed are recorded as attributes.
+    -->
+    <design_rotor_speed mode="cruise" unit="rpm" tip_speed="600 ft/s" location="table 4.5, p. 25; p. 19">458</design_rotor_speed>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - The rotor-disc area is reported per rotor.
+      - RPM and tip-speed values are tied to the stated design modes; do not assume one RPM applies throughout conversion.
+    </comment>
+  </proprotor_and_drive_system>
+</xv15_dataset>

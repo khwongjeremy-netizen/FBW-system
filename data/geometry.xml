@@ -1,0 +1,168 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Groups major aircraft dimensions.
+      - Check each measurement's definition before comparing values.
+    -->
+  <geometry>
+    <!--
+      - Records the fuselage length.
+      - Check the note for the measurement endpoints.
+    -->
+    <fuselage length="42.1" length_unit="ft" source="S1" note="Initial inventory describes nose tip to vertical-fin tip." />
+    <!--
+      - Overall rotor tip-to-tip dimension from the initial inventory.
+      - Not the same as wing span between rotor centres.
+    -->
+    <rotor_tip_to_tip_span value="57.2" unit="ft" source="S1" note="Initial inventory; definition needs checking in source." />
+    <!--
+      - Records the maximum fin height.
+      - Useful for the aircraft's overall geometry.
+    -->
+    <maximum_fin_height value="12.75" unit="ft" source="S1" />
+    <!--
+      - Groups wing shape and size measurements.
+      - Wing geometry influences aerodynamic forces and moments.
+    -->
+    <wing source="S2" location="p. 12, sec. 3.3">
+      <!--
+      - Surface area of the named wing or tail.
+      - Used in aerodynamic force calculations.
+    -->
+      <area unit="ft^2">169.0</area>
+      <!--
+      - Span of the named surface or dimension.
+      - Read the definition attribute when present.
+    -->
+      <span unit="ft" definition="distance between rotor centerlines at tilt axis">32.17</span>
+      <!--
+      - Front-to-back length of an aerodynamic surface.
+      - For rotor blades, chord means blade width.
+    -->
+      <chord unit="ft" definition="constant chord">5.25</chord>
+      <!--
+      - Describes surface proportions using span and area/chord.
+      - It can affect aerodynamic behaviour.
+    -->
+      <aspect_ratio>6.12</aspect_ratio>
+      <!--
+      - Mounting angle of the named surface.
+      - Not the same as aircraft angle of attack.
+    -->
+      <incidence unit="deg">3.0</incidence>
+      <!--
+      - Angle of the wing as it extends outward.
+      - Can affect lateral stability.
+    -->
+      <dihedral unit="deg">2.0</dihedral>
+      <!--
+      - Sweep angle measured along the quarter-chord line.
+      - Use the recorded sign convention.
+    -->
+      <quarter_chord_sweep unit="deg" convention="negative indicates forward sweep">-6.5</quarter_chord_sweep>
+      <!--
+      - Identifies the surface's cross-sectional profile.
+      - Different profiles have different aerodynamic properties.
+    -->
+      <airfoil>NACA 64A223 (Mod)</airfoil>
+    </wing>
+    <!--
+      - Groups horizontal stabilizer dimensions.
+      - The tail contributes to pitch stability and control.
+    -->
+    <horizontal_tail source="S2" location="p. 12, sec. 3.3">
+      <!--
+      - Surface area of the named wing or tail.
+      - Used in aerodynamic force calculations.
+    -->
+      <area unit="ft^2">50.25</area>
+      <!--
+      - Span of the named surface or dimension.
+      - Read the definition attribute when present.
+    -->
+      <span unit="ft">12.83</span>
+      <!--
+      - Front-to-back length of an aerodynamic surface.
+      - For rotor blades, chord means blade width.
+    -->
+      <chord unit="ft">3.92</chord>
+      <!--
+      - Describes surface proportions using span and area/chord.
+      - It can affect aerodynamic behaviour.
+    -->
+      <aspect_ratio>3.27</aspect_ratio>
+      <!--
+      - Records the reported tail-incidence adjustment range.
+      - Flight and ground ranges are listed separately.
+    -->
+      <incidence_adjustment unit="deg" flight_adjustment="0 to +6" ground_adjustment="leading edge up -20 to leading edge down +10" />
+      <!--
+      - Identifies the surface's cross-sectional profile.
+      - Different profiles have different aerodynamic properties.
+    -->
+      <airfoil>NACA 64A015</airfoil>
+      <!--
+      - Distance to the named tail surface.
+      - Used when relating force to rotational moment.
+    -->
+      <moment_arm unit="ft">22.4</moment_arm>
+    </horizontal_tail>
+    <!--
+      - Groups vertical stabilizer dimensions.
+      - The tail contributes to directional stability and yaw control.
+    -->
+    <vertical_tail source="S2" location="p. 12, sec. 3.3">
+      <!--
+      - Total area of the named surface.
+      - Check whether the source counts one surface or both.
+    -->
+      <total_area unit="ft^2" definition="both fins">50.5</total_area>
+      <!--
+      - Span of the named surface or dimension.
+      - Read the definition attribute when present.
+    -->
+      <span unit="ft">7.68</span>
+      <!--
+      - Chord at the tail's root, where it joins the aircraft.
+    -->
+      <root_chord unit="ft">4.09</root_chord>
+      <!--
+      - Chord at the outer tip of the tail.
+    -->
+      <tip_chord unit="ft">2.40</tip_chord>
+      <!--
+      - Representative chord used in aerodynamic calculations.
+    -->
+      <mean_aerodynamic_chord unit="ft">3.72</mean_aerodynamic_chord>
+      <!--
+      - Describes surface proportions using span and area/chord.
+      - It can affect aerodynamic behaviour.
+    -->
+      <aspect_ratio>2.33</aspect_ratio>
+      <!--
+      - Sweep angle measured along the quarter-chord line.
+      - Use the recorded sign convention.
+    -->
+      <quarter_chord_sweep unit="deg">31.6</quarter_chord_sweep>
+      <!--
+      - Identifies the surface's cross-sectional profile.
+      - Different profiles have different aerodynamic properties.
+    -->
+      <airfoil>NACA 0009</airfoil>
+      <!--
+      - Distance to the named tail surface.
+      - Used when relating force to rotational moment.
+    -->
+      <moment_arm unit="ft">23.2</moment_arm>
+    </vertical_tail>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - Geometric span definitions matter: wing span here is between rotor centerlines, while the initial 57.2 ft value is a tip-to-tip dimension.
+      - Do not treat these two span values as competing measurements of the same dimension.
+    </comment>
+  </geometry>
+</xv15_dataset>
+<!--I’ve only skimmed through this dataset rather than thoroughly checking it.-->

@@ -1,0 +1,62 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Groups reported hover control-response figures.
+      - Values apply to the listed weight and centre-of-gravity conditions.
+    -->
+  <hover_control_response source="S2" condition="gross_weight_13000_lb; aft_CG; unless_noted" location="table 8.3.2, p. 62">
+    <!--
+      - Angular-acceleration response per inch of control movement.
+      - Axis and SCAS state identify the case.
+    -->
+    <control_sensitivity axis="pitch" scas="off" unit="rad/s^2/in">0.350</control_sensitivity><!-- what is SCAS? and explain this variable more thoroughly, including other tags with commented '#' -->
+    <!--
+      - Angular-acceleration response per inch of control movement.
+      - Axis and SCAS state identify the case.
+    -->
+    <control_sensitivity axis="roll" scas="off" unit="rad/s^2/in">0.471</control_sensitivity><!--"#"-->
+    <!--
+      - Angular-acceleration response per inch of control movement.
+      - Axis and SCAS state identify the case.
+    -->
+    <control_sensitivity axis="yaw" scas="off" unit="rad/s^2/in">0.132</control_sensitivity><!--"#"-->
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="pitch" scas="off" unit="1/s">0.85</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="pitch" scas="on" unit="1/s">1.54</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="roll" scas="off" unit="1/s">0.77</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="roll" scas="on" unit="1/s">1.82</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="yaw" scas="off" unit="1/s">0.116</damping>
+    <!--
+      - Describes how rotational motion is damped.
+      - Compare SCAS states under matching conditions.
+    -->
+    <damping axis="yaw" scas="on" unit="1/s">2.5</damping>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - SCAS means Stability and Control Augmentation System in the extracted report context.
+      - These are condition-specific response figures, not necessarily universal constants or complete control laws.
+    </comment>
+  </hover_control_response>
+</xv15_dataset>

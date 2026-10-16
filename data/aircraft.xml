@@ -1,0 +1,68 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <aircraft_overview source="S1">
+    <!--
+      - Broad aircraft category.
+      - VTOL means vertical takeoff and landing.
+    -->
+    <type>VTOL tiltrotor</type>
+    <!--
+      - Number of engines installed.
+      - Useful when estimating total available power.
+    -->
+    <engine_count>2</engine_count>
+    <!--
+      - Identifies the engine design.
+      - Use this when researching engine-specific limits.
+    -->
+    <engine_type>Twin Lycoming T-53 turboshaft engines</engine_type>
+    <!--
+      - Number of blades on each rotor.
+      - Part of the rotor's physical geometry.
+    -->
+    <rotor_blade_count>3</rotor_blade_count>
+    <!--
+      - Width of one rotor from tip to tip.
+      - Used to determine rotor-disc size.
+    -->
+    <rotor_diameter unit="ft">25</rotor_diameter>
+    <!--
+      - Reported time to change flight configuration.
+      - Describes the transition between hover and airplane modes.
+    -->
+    <conversion_time unit="s">10-15</conversion_time>
+    <!--
+      - Reported time available for cruise.
+      - Depends on the conditions stated by the source.
+    -->
+    <cruise_duration mode="airplane" unit="h">2+</cruise_duration>
+    <!--
+      - Records vertical takeoff capability.
+      - This is a capability flag, not a force value.
+    -->
+    <vertical_takeoff>true</vertical_takeoff>
+    <!--
+      - Records whether payload delivery is listed as a capability.
+      - It does not specify a payload-weight limit.
+    -->
+    <payload_delivery_capability>true</payload_delivery_capability>
+    <!--
+      - Fuel-consumption comparison from the inventory.
+      - Check the original context before using it in calculations.
+    -->
+    <long_range_fuel_consumption comparison="helicopter" unit="percent">50</long_range_fuel_consumption> <!--What is 'comparison's' role in this variable? and what is the valuable fo this variable specifically?-->
+    <!--
+      - Distance threshold listed for fuel efficiency.
+      - Confirm the source's definition before modelling it.
+    -->
+    <fuel_efficiency_threshold unit="km">185</fuel_efficiency_threshold><!--What is fuel efficiency threshold?-->
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - These are retained from the original inventory, not independently validated here.
+      - Terms such as “fuel efficiency threshold” and the 50 percent comparison need their original context checked.
+    </comment>
+  </aircraft_overview>
+</xv15_dataset>

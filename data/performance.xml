@@ -1,0 +1,117 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Groups speed estimates from the initial inventory.
+      - Verify their definitions and conditions before use.
+    -->
+  <performance_inventory source="S1">
+    <!--
+      - Recorded cruise-speed estimate.
+      - The associated altitude is included below.
+    -->
+    <cruise_speed unit="mph" altitude_unit="ft" status="estimated">345
+      <!--
+      - Altitude associated with the speed estimate.
+      - Units are specified by the parent tag.
+    -->
+      <altitude>16500</altitude>
+    </cruise_speed>
+    <!--
+      - Recorded maximum-speed estimate.
+      - Do not assume it applies to every flight configuration.
+    -->
+    <maximum_speed unit="mph" altitude_unit="ft" status="estimated">375
+      <!--
+      - Altitude associated with the speed estimate.
+      - Units are specified by the parent tag.
+    -->
+      <altitude>16500</altitude>
+    </maximum_speed>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>- Retained from the initial inventory. Verify definitions, flight configuration, and source context before using in calculations.</comment>
+  </performance_inventory>
+  <!--
+      - Summaries of useful relationships shown in report figures.
+      - These are not full numerical lookup tables.
+    -->
+  <reported_figures source="S2">
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="CG_limits" location="fig. 3.2.1, p. 13">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Permissible gross weight, 8000 to 15000 lb, versus fuselage station, FS 286 to FS 306 in.</relationship>
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extraction describes gear-retraction forward/aft limits and an achievable CG range around FS 292 to FS 302 in.</finding>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="flaperon_vs_flap" location="fig. 3.4.1, p. 15">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Flaperon roll-deflection limits versus flap setting, described from -20 deg up to +80 deg down.</relationship>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="conversion_corridor" location="fig. 5.4.1, p. 29">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Nacelle angle 0 to 90 deg versus true airspeed 0 to 320 kt.</relationship>
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extraction notes about 70 kt at 60 deg tilt as a left-boundary example; reported cruise torque/structural speeds are V_C = 170 kt and V_D = 189 kt.</finding>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="conversion_power_required" location="fig. 5.4.2, p. 29">
+      <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+      <relationship>Power required divided by takeoff power available versus airspeed.</relationship>
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extraction describes a bucket-shaped trend, with a minimum near 80 kt and power ratio around 0.28 at nacelle angles 60 to 75 deg; hover ratio is described as about 0.65.</finding>
+    </figure>
+    <!--
+      - Identifies a source figure and its topic.
+      - The location attribute points back to the report.
+    -->
+    <figure name="drive_system_frequencies" location="fig. 7.1.3, p. 50">
+      <!--
+      - Records a finding from the extraction.
+      - Verify it in the original figure before using it numerically.
+    -->
+      <finding>Extracted frequencies: first asymmetric interconnect-shaft mode 0.39/0.48 per rev; first symmetric power-turbine mode 1.26/1.55 per rev.</finding>
+    </figure>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>- Figure summaries are descriptions from NotebookLM, not digitized data points. Do not turn plotted trends into precise lookup tables without inspecting the original figures.</comment>
+  </reported_figures>
+</xv15_dataset>

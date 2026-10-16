@@ -1,0 +1,159 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <mass_properties>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="design_gross" unit="lb" source="S2" location="p. 5, sec. 3.1.1">13000</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="maximum_gross_STOL" unit="lb" source="S2" location="p. 5, sec. 3.1.1">15000</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="basic_empty" unit="lb" source="S2" location="p. 5, sec. 3.1.1; p. 11">9076</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="research_mission_empty" unit="lb" source="S2" location="p. 5, sec. 3.1.1; p. 11">10073</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="useful_load" unit="lb" source="S2" location="p. 11, sec. 3.1.2">2927</weight>
+    <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+    <weight name="maximum_fuel_load" unit="lb" source="S2" location="p. 11, sec. 3.1.2">1490</weight>
+    <!--
+      - Breaks useful load into listed categories.
+      - Each child item records one category's weight.
+    -->
+    <useful_load_breakdown source="S2" location="p. 11, sec. 3.1.2">
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="crew" unit="lb">400</item>
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="fuel" unit="lb">1490</item>
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="oil_and_fluids" unit="lb">138</item>
+      <!--
+      - One listed category or system item.
+      - The name attribute identifies what it represents.
+    -->
+      <item name="payload" unit="lb">899</item>
+    </useful_load_breakdown>
+    <!--
+      - Groups weights by aircraft subsystem.
+      - Useful for seeing how the aircraft's weight is distributed.
+    -->
+    <component_weights source="S2" location="p. 5 and p. 11, sec. 3.1.2">
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="rotor_system_group" unit="lb">1070</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="wing_group" unit="lb">873</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="tail_group" unit="lb">209</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="fuselage_group" unit="lb">1442</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="landing_gear_group" unit="lb">508</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="hydraulics_and_flight_controls_group" unit="lb">934</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="powerplant_group" unit="lb">1754</weight>
+      <!--
+      - A reported aircraft or component weight.
+      - The name attribute tells you which weight it describes.
+    -->
+      <weight name="transmission_and_conversion_group" unit="lb">1263</weight>
+    </component_weights>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - “Weight” values are kept in the report's stated lb units; do not silently treat them as mass in a physics equation.
+      - The report's useful-load breakdown and the reported total should be checked for arithmetic/context before use.
+    </comment>
+  </mass_properties>
+  <!--
+      - Describes resistance to rotational acceleration.
+      - Values depend on axis and flight mode.
+    -->
+  <mass_moments_of_inertia source="S2" condition="gross_weight_13000_lb" location="p. 12, sec. 3.1.3">
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="roll" symbol="Ixx" mode="airplane" unit="slug*ft^2">40500</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="roll" symbol="Ixx" mode="helicopter" unit="slug*ft^2">42400</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="pitch" symbol="Iyy" mode="airplane" unit="slug*ft^2">13200</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="pitch" symbol="Iyy" mode="helicopter" unit="slug*ft^2">14300</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="yaw" symbol="Izz" mode="airplane" unit="slug*ft^2">50300</inertia>
+    <!--
+      - One rotational-inertia value.
+      - Axis and mode identify the case it applies to.
+    -->
+    <inertia axis="yaw" symbol="Izz" mode="helicopter" unit="slug*ft^2">49500</inertia>
+    <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+    <comment>
+      - The extracted source provides separate values for airplane and helicopter modes.
+      - No values for intermediate nacelle angles were identified in this extraction.
+    </comment>
+  </mass_moments_of_inertia>
+</xv15_dataset>

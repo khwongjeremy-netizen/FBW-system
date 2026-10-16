@@ -1,0 +1,34 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <sources>
+    <!--
+      - Identifies where the information came from.
+      - Use the source ID to trace values back to a reference.
+    -->
+    <source id="S1" title="XV-15 Tiltrotor" author="NASA" date="2003-09-11" url="https://www.nasa.gov/aeronautics/nasa-aircraft/xv-15-tiltrotor/">
+      <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+      <comment>
+        - Original NASA overview page.
+        - Several entries in the initial inventory were attributed to this source.
+      </comment>
+    </source>
+    <!--
+      - Identifies where the information came from.
+      - Use the source ID to trace values back to a reference.
+    -->
+    <source id="S2" title="NASA/Army XV-15 Tilt Rotor Research Aircraft Familiarization Document" author="NASA" date="1975-01" report="NASA TM-X-62407" url="https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf">
+      <!--
+      - Short context or limitation notes.
+      - Comments do not change the recorded source value.
+    -->
+      <comment>
+        - NotebookLM extraction identifies this as the source for the detailed engineering data below.
+        - Page and section references are recorded beside each value.
+        - Verify extracted values against the original report before treating them as validated model inputs.
+      </comment>
+    </source>
+  </sources>
+</xv15_dataset>

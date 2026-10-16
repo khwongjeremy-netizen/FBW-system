@@ -1,0 +1,61 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.0">
+  <!--
+      - Groups equations and relationships from the report.
+      - Check their conditions before applying them.
+    -->
+  <reported_relationships source="S2">
+    <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+    <relationship name="hover_wing_download_loss" location="sec. 5.1, p. 26">
+      <!--
+      - Equation transcribed from the source extraction.
+      - Check symbols and assumptions before coding it.
+    -->
+      <equation>T_loss / T_total = 0.07</equation>
+      <!--
+      - Plain-language explanation of the equation.
+      - Connects the formula to the described behaviour.
+    -->
+      <meaning>In hover out of ground effect, rotor downwash striking the wing reduces effective hover lift by 7 percent.</meaning>
+      <!--
+      - Operating condition attached to a rating or relationship.
+    -->
+      <condition>Flaps and flaperons fully deflected downward.</condition>
+    </relationship>
+    <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+    <relationship name="transmission_efficiency" location="sec. 5.1, p. 26">
+      <!--
+      - Equation transcribed from the source extraction.
+      - Check symbols and assumptions before coding it.
+    -->
+      <equation>P_rotor = eta_xmsn * P_engine; eta_xmsn = 0.93</equation>
+      <!--
+      - Plain-language explanation of the equation.
+      - Connects the formula to the described behaviour.
+    -->
+      <meaning>Net power delivered to the rotor masts is reported as 93 percent of engine power.</meaning>
+    </relationship>
+    <!--
+      - One named technical relationship.
+      - The name and location identify its topic and source.
+    -->
+    <relationship name="hover_thrust_margin" location="sec. 5.2, p. 26">
+      <!--
+      - Equation transcribed from the source extraction.
+      - Check symbols and assumptions before coding it.
+    -->
+      <equation>U_T / W = 1.1</equation>
+      <!--
+      - Plain-language explanation of the equation.
+      - Connects the formula to the described behaviour.
+    -->
+      <meaning>Hover research performance limit includes a 10 percent thrust margin over weight.</meaning>
+    </relationship>
+  </reported_relationships>
+</xv15_dataset>
