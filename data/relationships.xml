@@ -10,6 +10,9 @@
       - The name and location identify its topic and source.
     -->
     <relationship name="hover_wing_download_loss" location="sec. 5.1, p. 26">
+
+    <!-- Maybe this relationshipp explanation can be a little problematic-->
+
       <!--
       - Equation transcribed from the source extraction.
       - Check symbols and assumptions before coding it.
@@ -30,6 +33,9 @@
       - The name and location identify its topic and source.
     -->
     <relationship name="transmission_efficiency" location="sec. 5.1, p. 26">
+
+    <!--This information could be a little unnecessary as it only states the potential margin of error rather than principles aiding with the simulation-->
+
       <!--
       - Equation transcribed from the source extraction.
       - Check symbols and assumptions before coding it.
@@ -59,3 +65,7 @@
     </relationship>
   </reported_relationships>
 </xv15_dataset>
+<!--
+ -inital fact check: ✅
+  -feedback: minor changes 🛠️
+ -->

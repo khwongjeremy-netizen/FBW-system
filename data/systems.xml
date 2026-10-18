@@ -30,5 +30,10 @@
       - The name attribute identifies what it represents.
     -->
     <item name="rotor_resonance">The lowest blade in-plane natural frequency is described as above the one-per-revolution operating speed.</item>
+    <!--when the rotors are out of position and therefore they create forces that feed into the natural bouncing forces of the aircraft body creating a cascading force of damage.-->
   </qualitative_system_behaviour>
 </xv15_dataset>
+<!--
+ -inital fact check: ✅
+  -feedback: little to none ✅
+ -->

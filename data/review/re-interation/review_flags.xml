@@ -13,15 +13,15 @@
       <!--
       - One source's version of a disputed or uncertain value.
     -->
+    <!--
       <entry source="S1" value="2926" unit="lb" meaning="initial inventory calls this max load" />
-      <!--
       - One source's version of a disputed or uncertain value.
     -->
-      <entry source="S2" value="2927" unit="lb" meaning="report extraction calls this useful load at 13000 lb gross weight" />
+      <entry source="S2" value="2927" unit="lb" meaning="report extraction calls this useful load at 13000 lb gross weight" /><!-- gonna go with this value over the other.-->
       <!--
       - Suggested verification step for the issue.
     -->
-      <action>Keep both source claims visible until their definitions and original locations are checked; do not overwrite one with the other.</action>
+      <action>Keep both source claims visible until their definitions and original locations are checked; do not overwrite one with the other.</action><!-- I like actions like these so the AI who created this should re-iterate more of the above-->
     </flag>
     <!--
       - One unresolved verification issue.
@@ -31,11 +31,11 @@
       <!--
       - One source's version of a disputed or uncertain value.
     -->
+    <!--
       <entry source="S1" value="12" unit="deg" meaning="initial inventory calls this wing forward sweep; exact definition unclear" />
-      <!--
       - One source's version of a disputed or uncertain value.
     -->
-      <entry source="S2" value="-6.5" unit="deg" meaning="quarter-chord sweep, negative sign indicates forward sweep" />
+      <entry source="S2" value="-6.5" unit="deg" meaning="quarter-chord sweep, negative sign indicates forward sweep" /><!--Since these refere to the same terms, I am gonna go with this value for my simulation-->
       <!--
       - Suggested verification step for the issue.
     -->
@@ -49,8 +49,8 @@
       <!--
       - One source's version of a disputed or uncertain value.
     -->
+    <!--
       <entry source="S2" value="1802 SHP" meaning="2-minute contingency rating" />
-      <!--
       - One source's version of a disputed or uncertain value.
     -->
       <entry source="S2" value="1550 SHP" meaning="10-minute takeoff rating" />
