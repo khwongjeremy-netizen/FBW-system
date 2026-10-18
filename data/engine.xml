@@ -47,4 +47,8 @@
     <comment>- Rating names, durations, and values are transcribed from the NotebookLM extraction; check the report table before relying on them.</comment>
   </engine_data>
 </xv15_dataset>
-  <!-- Why is power_rating the name for tehse variables?  what does that mean and hwa tdo these units mean? are they operating parameters of the engines?-->
+  <!-- Why is power_rating the name for these variables?  what does that mean and hwa tdo these units mean? are they operating parameters of the engines?-->
+  <!--
+ -inital fact check: ✅
+  -feedback: minor changes 🛠️
+ -->

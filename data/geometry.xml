@@ -95,17 +95,17 @@
       - Records the reported tail-incidence adjustment range.
       - Flight and ground ranges are listed separately.
     -->
-      <incidence_adjustment unit="deg" flight_adjustment="0 to +6" ground_adjustment="leading edge up -20 to leading edge down +10" />
+      <incidence_adjustment unit="deg" flight_adjustment="0 to +6" ground_adjustment="leading edge up -20 to leading edge down +10" /><!-- where deos this show up? where is the soruce of this?-->
       <!--
       - Identifies the surface's cross-sectional profile.
       - Different profiles have different aerodynamic properties.
     -->
-      <airfoil>NACA 64A015</airfoil>
+      <airfoil>NACA 64A015</airfoil><!-- where does this show up? where is the source of this?-->
       <!--
       - Distance to the named tail surface.
       - Used when relating force to rotational moment.
     -->
-      <moment_arm unit="ft">22.4</moment_arm>
+      <moment_arm unit="ft">22.4</moment_arm><!-- this is actually under the "tail length"-->
     </horizontal_tail>
     <!--
       - Groups vertical stabilizer dimensions.
@@ -129,11 +129,11 @@
       <!--
       - Chord at the outer tip of the tail.
     -->
-      <tip_chord unit="ft">2.40</tip_chord>
+      <tip_chord unit="ft">2.40</tip_chord><!-- unclear as of what this is specifically refering to.-->
       <!--
       - Representative chord used in aerodynamic calculations.
     -->
-      <mean_aerodynamic_chord unit="ft">3.72</mean_aerodynamic_chord>
+      <mean_aerodynamic_chord unit="ft">3.72</mean_aerodynamic_chord><!-- unclear as of what this is specifically refering to.-->
       <!--
       - Describes surface proportions using span and area/chord.
       - It can affect aerodynamic behaviour.
@@ -165,4 +165,7 @@
     </comment>
   </geometry>
 </xv15_dataset>
-<!--I’ve only skimmed through this dataset rather than thoroughly checking it.-->
+<!--
+ -inital fact check: ✅
+  -feedback: some important clarifications 🔎
+ -->

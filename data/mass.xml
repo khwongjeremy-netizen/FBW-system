@@ -55,7 +55,7 @@
       - One listed category or system item.
       - The name attribute identifies what it represents.
     -->
-      <item name="payload" unit="lb">899</item>
+      <item name="additional_payload" unit="lb">899</item>
     </useful_load_breakdown>
     <!--
       - Groups weights by aircraft subsystem.
@@ -88,6 +88,7 @@
     -->
       <weight name="landing_gear_group" unit="lb">508</weight>
       <!--
+      -Also known as alighting gear
       - A reported aircraft or component weight.
       - The name attribute tells you which weight it describes.
     -->
@@ -157,3 +158,7 @@
     </comment>
   </mass_moments_of_inertia>
 </xv15_dataset>
+<!--
+ -inital fact check: ✅
+  -feedback: little to none ✅
+ -->

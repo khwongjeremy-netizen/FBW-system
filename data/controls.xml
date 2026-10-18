@@ -29,17 +29,17 @@
       - Reported upward deflection limit for roll control.
       - Confirm the source's sign convention.
     -->
-      <roll_travel_up unit="deg">23.8</roll_travel_up>
+      <roll_travel_up unit="deg" location="p. 14, sec. 3.4 Figure 3.4.1.">23.8</roll_travel_up>
       <!--
       - Reported downward deflection limit for roll control.
       - Confirm the source's sign convention.
     -->
-      <roll_travel_down unit="deg">13.8</roll_travel_down>
+      <roll_travel_down unit="deg" location="p. 14, sec. 3.4 Figure 3.4.1.">13.8</roll_travel_down>
       <!--
       - Short context or limitation notes.
       - Comments do not change the recorded source value.
     -->
-      <comment>- NotebookLM describes these as limits during conversion; confirm the exact sign convention in the figure.</comment>
+      <comment>- NotebookLM describes these as limits during conversion; confirm the exact sign convention in the figure.</comment><!-- Not sure on that one I. beleive all are correct at the moment -->
     </flaperon>
     <!--
       - Movable tail surface used mainly for pitch control.
@@ -99,3 +99,7 @@
     </pilot_controls>
   </control_surfaces>
 </xv15_dataset>
+<!--
+ -inital fact check: ✅
+  -feedback: minor changes 🛠️
+ -->
