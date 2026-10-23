@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  
+  <proprotor_and_drive_system source="S2">
+    
+    <rotor_blades_per_hub location="p. 17, sec. 3.7">3</rotor_blades_per_hub>
+    
+    <rotor_diameter unit="ft" location="p. 17, sec. 3.7">25.0</rotor_diameter>
+    
+    <rotor_disc_area_per_rotor unit="ft^2" location="p. 17, sec. 3.7">491</rotor_disc_area_per_rotor>
+    
+    <blade_chord unit="in" location="p. 17, sec. 3.7">14.0</blade_chord>
+    
+    <rotor_solidity location="p. 17, sec. 3.7">0.089</rotor_solidity>
+    
+    <hub_precone_angle unit="deg" location="p. 17, sec. 3.7">2.5</hub_precone_angle>
+    
+    <pitch_flap_coupling_angle symbol="delta3" unit="deg" location="p. 17, sec. 3.7; p. 46">-15.0</pitch_flap_coupling_angle>
+    
+    <mechanical_flapping_limit unit="deg" location="p. 17, sec. 3.7">±12</mechanical_flapping_limit>
+    
+    <gear_ratio_engine_to_rotor_mast location="table 4.5, p. 25">35.11:1</gear_ratio_engine_to_rotor_mast>
+    
+    <gear_ratio_interconnect_shaft location="table 4.5, p. 25">3.10:1</gear_ratio_interconnect_shaft>
+    
+    <design_rotor_speed mode="hover" unit="rpm" tip_speed="740 ft/s" location="table 4.5, p. 25; p. 19">565</design_rotor_speed>
+    
+    <design_rotor_speed mode="cruise" unit="rpm" tip_speed="600 ft/s" location="table 4.5, p. 25; p. 19">458</design_rotor_speed>
+    
+    <test_rotor_speed mode="hover" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">589</test_rotor_speed>
+    <test_rotor_speed mode="cruise" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">517</test_rotor_speed>
+    
+    <comment>
+      - The rotor-disc area is reported per rotor.
+      - RPM and tip-speed values are tied to the stated design modes; do not assume one RPM applies throughout conversion.
+    </comment>
+  </proprotor_and_drive_system>
+</xv15_dataset>

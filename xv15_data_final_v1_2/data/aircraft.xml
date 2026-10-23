@@ -1,0 +1,33 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  <aircraft_overview source="S1">
+    
+    <type>VTOL tiltrotor</type>
+    
+    <engine_count>2</engine_count>
+    
+    <engine_type>Twin Lycoming T-53 turboshaft engines</engine_type>
+    
+    <rotor_blade_count>3</rotor_blade_count>
+    
+    <rotor_diameter unit="ft">25</rotor_diameter>
+    
+    <conversion_time unit="s">10-15</conversion_time>
+    
+    <cruise_duration mode="airplane" unit="h">2+</cruise_duration>
+    
+    <vertical_takeoff>true</vertical_takeoff>
+    
+    <payload_delivery_capability>true</payload_delivery_capability>
+    
+    <long_range_fuel_consumption comparison="helicopter" mode="airplane" interpretation="reported_less_fuel_used_over_longer_distances" unit="percent" citation_status="exact passage not supplied in NotebookLM table">50</long_range_fuel_consumption>
+    
+    <fuel_efficiency_threshold unit="km" citation_status="exact passage not supplied in NotebookLM table">185</fuel_efficiency_threshold>
+    
+    <comment>
+      - The 50 percent / 185 km statements are contextual claims reported by NotebookLM, not verified fuel-flow laws.
+      - Confirm the original wording and comparison conditions before using either value in calculations.
+      - Source S1 URL is recorded in sources.xml; the supplied table did not provide a pinpoint passage citation.
+    </comment>
+  </aircraft_overview>
+</xv15_dataset>

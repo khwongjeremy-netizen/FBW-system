@@ -1,0 +1,83 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  
+  <geometry>
+    
+    <fuselage length="42.1" length_unit="ft" source="S1" note="Initial inventory describes nose tip to vertical-fin tip." />
+    
+    <rotor_tip_to_tip_span value="57.2" unit="ft" source="S1" note="Initial inventory; definition needs checking in source." />
+    
+    <maximum_fin_height value="12.75" unit="ft" source="S1" />
+    
+    
+    <wing source="S2" location="p. 12, sec. 3.3">
+      
+      <area unit="ft^2">169.0</area>
+      
+      <span unit="ft" definition="distance between rotor centerlines at tilt axis">32.17</span>
+      
+      <chord unit="ft" definition="constant chord">5.25</chord>
+      
+      <aspect_ratio>6.12</aspect_ratio>
+      
+      <incidence unit="deg">3.0</incidence>
+      
+      <dihedral unit="deg">2.0</dihedral>
+      
+      <quarter_chord_sweep unit="deg" convention="negative indicates forward sweep">-6.5</quarter_chord_sweep>
+      
+      <airfoil>NACA 64A223 (Mod)</airfoil>
+    </wing>
+    
+    
+    <horizontal_tail source="S2" location="p. 12, sec. 3.3">
+      
+      <area unit="ft^2">50.25</area>
+      
+      <span unit="ft">12.83</span>
+      
+      <chord unit="ft">3.92</chord>
+      
+      <aspect_ratio>3.27</aspect_ratio>
+      
+      
+      <incidence_adjustment unit="deg" flight_adjustment="0 to +6" ground_adjustment="leading edge up -20 to leading edge down +10" citation_status="exact table or figure not supplied" />
+      
+      
+      <airfoil>NACA 64A015</airfoil>
+      
+      
+      <moment_arm unit="ft" definition_status="reference points not specified in supplied table">22.4</moment_arm>
+    </horizontal_tail>
+    
+    
+    <vertical_tail source="S2" location="p. 12, sec. 3.3">
+      
+      <total_area unit="ft^2" definition="both fins">50.5</total_area>
+      
+      <span unit="ft">7.68</span>
+      
+      <root_chord unit="ft">4.09</root_chord>
+      
+      
+      <tip_chord unit="ft" citation_status="exact table or figure not supplied">2.40</tip_chord>
+      
+      
+      <mean_aerodynamic_chord unit="ft" citation_status="exact table or figure not supplied">3.72</mean_aerodynamic_chord>
+      
+      <aspect_ratio>2.33</aspect_ratio>
+      
+      <quarter_chord_sweep unit="deg">31.6</quarter_chord_sweep>
+      
+      <airfoil>NACA 0009</airfoil>
+      
+      
+      <moment_arm unit="ft" definition_status="reference points not specified in supplied table">23.2</moment_arm>
+    </vertical_tail>
+    
+    <comment>
+      - Geometric span definitions matter: wing span here is between rotor centerlines, while the initial 57.2 ft value is a tip-to-tip dimension.
+      - Do not treat these two span values as competing measurements of the same dimension.
+    </comment>
+  <tail_geometry source="S2" location="sec. 3.3, printed p. 12 / PDF p. 15"><horizontal_tail><area_ft2>50.25</area_ft2><span_ft>12.83</span_ft><chord_ft>3.92</chord_ft><mean_aerodynamic_chord_ft>3.92</mean_aerodynamic_chord_ft><aspect_ratio>3.27</aspect_ratio><incidence_deg>0 to +6</incidence_deg><dihedral_deg>0</dihedral_deg><quarter_chord_sweep_deg>0</quarter_chord_sweep_deg><naca_section>64A015</naca_section><tail_length_ft>22.4</tail_length_ft></horizontal_tail><vertical_tail><area_ft2>50.5</area_ft2><span_ft>7.68</span_ft><chord_root_ft>4.09</chord_root_ft><chord_tip_ft>2.40</chord_tip_ft><mean_aerodynamic_chord_ft>3.72</mean_aerodynamic_chord_ft><aspect_ratio>2.33</aspect_ratio><quarter_chord_sweep_upper_deg>31.6</quarter_chord_sweep_upper_deg><naca_section>0009</naca_section><tail_length_ft>23.2</tail_length_ft></vertical_tail><note>Transcribed from supplied extraction. Horizontal-tail incidence is reported as 0 to +6 deg, hinged at 33% chord; check original table footnotes before detailed geometry implementation.</note></tail_geometry></geometry>
+</xv15_dataset>

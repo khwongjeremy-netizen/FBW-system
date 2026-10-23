@@ -1,0 +1,52 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  
+  <control_surfaces source="S2">
+    
+    <flap location="p. 14, sec. 3.4">
+      
+      <total_area unit="ft^2" definition="area aft of hinge, both panels">11.0</total_area>
+    </flap>
+    
+    <flaperon location="p. 14, sec. 3.4">
+      
+      <total_area unit="ft^2" definition="area aft of hinge, both panels">20.2</total_area>
+      
+      <roll_travel_up unit="deg" location="p. 14, sec. 3.4 Figure 3.4.1.">23.8</roll_travel_up>
+      
+      <roll_travel_down unit="deg" location="p. 14, sec. 3.4 Figure 3.4.1.">13.8</roll_travel_down>
+      
+      <comment>
+        - Retain the listed 23.8 deg up and 13.8 deg down values from the current extraction.
+        - Figure 3.4.1 is described as flaperon roll-deflection limits versus flap setting, so the applicable flap setting and sign convention matter.
+        - Do not assume these are universal deflection limits independent of flap setting until the figure is checked directly.
+        - Source: S2, NASA TM-X-62407, p. 14, sec. 3.4, fig. 3.4.1. PDF: https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf
+      </comment>
+    </flaperon>
+    
+    <elevator location="p. 14, sec. 3.4">
+      
+      <total_area unit="ft^2" definition="area aft of hinge">13.0</total_area>
+      
+      <travel unit="deg">±20</travel>
+    </elevator>
+    
+    <rudder location="p. 14, sec. 3.4">
+      
+      <total_area unit="ft^2" definition="area aft of hinge, total">7.5</total_area>
+      
+      <travel unit="deg">±20</travel>
+    </rudder>
+    
+    <pilot_controls source="S2" location="table 8.3.1, p. 61">
+      
+      <stick_fore_aft_travel unit="in">±4.8</stick_fore_aft_travel>
+      
+      <stick_lateral_travel unit="in">±4.8</stick_lateral_travel>
+      
+      <collective_power_lever_travel unit="in">10.0</collective_power_lever_travel>
+      
+      <pedal_travel unit="in">±2.5</pedal_travel>
+    </pilot_controls>
+  </control_surfaces>
+</xv15_dataset>

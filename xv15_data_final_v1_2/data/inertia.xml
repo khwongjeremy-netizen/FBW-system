@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  <moments_of_inertia source="S2" location="sec. 3.1.3, printed p. 12 / PDF p. 15" units="slug-ft^2" condition="13000 lb gross weight">
+    <coordinate_frame>Aircraft body axes, origin at aircraft centre of gravity, as described in the supplied research audit.</coordinate_frame>
+    <centre_of_gravity station_in="296.0" permissible_station_range_in="292-301" source="S2" location="sec. 3.1.3, printed p. 12 / PDF p. 15" status="reported_by_research_audit" />
+    <endpoint nacelle_angle_deg="0" mode="airplane" evidence_status="reported_in_S2; audit says checked against original, not independently re-opened during package build">
+      <I_xx axis="roll">40500</I_xx><I_yy axis="pitch">13200</I_yy><I_zz axis="yaw">50300</I_zz>
+      <I_xz status="not_reported">unknown</I_xz>
+    </endpoint>
+    <endpoint nacelle_angle_deg="90" mode="helicopter" evidence_status="reported_in_S2; audit says checked against original, not independently re-opened during package build">
+      <I_xx axis="roll">42400</I_xx><I_yy axis="pitch">14300</I_yy><I_zz axis="yaw">49500</I_zz>
+      <I_xz status="not_reported">unknown</I_xz>
+    </endpoint>
+    <intermediate_angles status="not_found_in_reviewed_sources" angles_deg="15 30 45 60 75">
+      <I_xx>unknown</I_xx><I_yy>unknown</I_yy><I_zz>unknown</I_zz><I_xz>unknown</I_xz>
+      <reason>No numerical intermediate-angle inertia values were found in the source set reviewed by the supplied audit.</reason>
+    </intermediate_angles>
+    <products_of_inertia status="incomplete"><I_xz>unknown at 0 and 90 degrees</I_xz><other_products>not reported in the extracted endpoint table</other_products></products_of_inertia>
+    <model_method status="not_implemented">
+      <finding source="S4" location="Subsystem 9: CG and Inertia, printed pp. 42-43; Ref. 26 on printed p. 53">NASA CR-166536 describes a CG/inertia subsystem and points to Lanham (1979), ASD-TR-79-5004, for the calculation procedure; the supplied audit reports that the actual procedure/equations are not reproduced in the reviewed text.</finding>
+      <rigid_body_model source="S4" location="Section J, printed p. 43">The report is described by the audit as using a six-degree-of-freedom rigid-body aircraft model for flight-path dynamics.</rigid_body_model>
+      <component_transform status="conceptual_only">A fixed-airframe plus moving pylon/nacelle/rotor component decomposition is a possible calculation structure, not a verified XV-15-specific equation or completed calculation in this dataset.</component_transform>
+      <required_inputs>Component masses; component own-axis inertia tensors; component centres of mass; conversion spindle coordinates; aircraft CG coordinates; geometry/orientation transforms; and consistent mass/configuration definitions.</required_inputs>
+    </model_method>
+    <baseline_caution source="S4" location="printed p. 5, Section 1.D item 12">NASA CR-166536 reportedly states that XV-15 inertia values were out of date because airframe modifications and flight-test instrumentation weights and locations were not included in the calculated inertias. Treat the S2 endpoints as historical baseline values, not automatically as validated flight-test configuration inertias.</baseline_caution>
+    <flight_test_identification_caution source="S7" location="NASA TM-89428; exact page/table not supplied in audit">The supplied audit reports that frequency-response identification found the baseline simulation underestimated pitch and yaw inertia because nose/tail test ballast was omitted from the simulation database. The reported sensitivity ratio and percentage comparisons require direct page-level verification before being used numerically.</flight_test_identification_caution>
+    <transformation_equation status="not_found">No source-documented closed-form inertia tensor transformation as a function of nacelle angle was identified in the reviewed material. Do not use a sine-squared curve, endpoint interpolation, or invented intermediate values as verified aircraft data.</transformation_equation>
+    <status_summary>Endpoint values are retained as historical source-reported values; intermediate-angle values and a reproducible source-grounded calculation remain unresolved.</status_summary>
+  </moments_of_inertia>
+</xv15_dataset>

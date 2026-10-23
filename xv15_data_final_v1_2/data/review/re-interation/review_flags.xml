@@ -1,0 +1,53 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  <review_flags>
+    <flag id="R1" severity="check" parameters="useful_load">
+      <entry source="S2" value="2927" unit="lb" meaning="report extraction calls this useful load at 13000 lb gross weight" />
+      <action>For the research-prototype simulation, select S2's 2927 lb research useful load because it is paired with the 13000 lb gross-weight and 10073 lb research-mission empty-weight figures. Keep S1's 2926 lb claim visible as unresolved until its exact definition/location is documented. The 3924 lb value is a derived comparison using the 9076 lb basic-empty weight, not the research configuration. Source trail: S2, pp. 5 and 11, NASA TM-X-62407; https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf.</action>
+    </flag>
+    <flag id="R2" severity="check" parameters="wing_sweep">
+      <entry source="S2" value="-6.5" unit="deg" meaning="quarter-chord sweep, negative sign indicates forward sweep" />
+      <action>Use -6.5 deg quarter-chord forward sweep for the current simulation geometry because the XML records S2 p. 12 sec. 3.3 for that definition. The 12 deg value is separately recorded as the rotor mechanical flapping limit in S2 sec. 3.7, p. 17, so the supplied audit identifies it as a category/attribution error rather than a competing wing-sweep value. Preserve this reasoning in the review trail. S2 PDF: https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf.</action>
+    </flag>
+    <flag id="R3" severity="check" parameters="engine_power_ratings">
+      <entry source="S2" value="1550 SHP" meaning="10-minute takeoff rating" />
+      <action>Keep 1802 SHP / 2 min contingency and 1550 SHP / 10 min takeoff as separate ratings; also retain 1401 SHP / 30 min military and 1250 SHP normal-continuous in engine.xml. The supplied table cites S3 (NASA SP-2000-4517) but its citation column is blank, while engine.xml currently points to S2 sec. 6.2 p. 37. Verify the exact source table and rating headings before marking this flag resolved. S3 PDF: https://ntrs.nasa.gov/api/citations/20000027499/downloads/20000027499.pdf.</action>
+    </flag>
+    <flag id="R4" severity="check" parameters="useful_load_breakdown">
+      <entry source="S2" value="400 + 1490 + 138 + 899 = 2927 lb" meaning="crew + fuel + oil/fluids + payload" />
+      <action>The arithmetic is correct: 400 + 1490 + 138 + 899 = 2927 lb. Retain these categories as the extracted research useful-load breakdown, but do not assume the categories are mutually exclusive or that all 997 lb of empty-weight difference is fixed test equipment until the source definitions are checked directly. Source trail: S2, p. 11 sec. 3.1.2; https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf.</action>
+    </flag>
+    <comment>
+      - “Check” flags are unresolved verification tasks, not claims that the source is wrong.
+      - Keep source values separate until you have checked the original page/table.
+    </comment>
+    <flag id="R5" severity="check" parameters="test_rotor_speed">
+      <action>589 rpm hover and 517 rpm airplane-mode speeds are now tied to S3, NASA SP-2000-4517 Appendix A, printed p. 149 / PDF p. 160. Retain separate design RPM values (565/458) in rotor.xml; do not conflate design and reported test operating speeds.</action>
+    </flag>
+    <flag id="R6" severity="check" parameters="aerodynamic_coefficients">
+      <action>The supplied audit provides figure ranges and approximate curve descriptors, not complete numeric arrays. Do not use approximate lift slope and stall descriptors as a substitute for the full nonlinear coefficient tables. Retrieve/digitize the cited figures and compare with Appendix B where available.</action>
+    </flag>
+    <flag id="R7" severity="check" parameters="inertia_values">
+      <action>Endpoint inertias are reported for 13000 lb gross weight; intermediate nacelle-angle values and transformation equations remain unknown. Do not silently interpolate them as verified data.</action>
+    </flag>
+    <flag id="R8" severity="check" parameters="wake_interference">
+      <action>Keep the 7% hover wing-download effect, the 60-knot broad wake-interference boundary, and the 30 ft/s ground-effect washout as separate phenomena with separate conditions. Avoid a universal hard cutoff until the original report/model implementation is checked.</action>
+    </flag>
+    <flag id="R9" severity="check" parameters="inertia_baseline_validity">
+      <entry source="NotebookLM audit" value="S4 historical-baseline warning" />
+      <action>NASA CR-166536 reportedly says the XV-15 inertias were outdated because airframe modifications and flight-test instrumentation mass/locations were omitted. Keep S2 endpoint numbers as historical baseline data and do not label them validated flight-test values until configuration is reconciled. Source reported by the supplied audit: NASA CR-166536, printed p. 5, Section 1.D item 12.</action>
+    </flag>
+    <flag id="R10" severity="check" parameters="flight_test_identified_inertia">
+      <entry source="NotebookLM audit" value="TM-89428 ballast finding" />
+      <action>The supplied audit reports that flight-test frequency-response identification found pitch/yaw inertia discrepancies associated with omitted nose/tail ballast. Verify exact page/table, definitions, ratios, and operating conditions in NASA TM-89428 before using the reported percentages or ratios as model parameters.</action>
+    </flag>
+    <flag id="R11" severity="check" parameters="intermediate_inertia_method">
+      <entry source="NotebookLM audit" value="No supported interpolation" />
+      <action>Intermediate-angle inertias and the explicit transformation method remain unavailable. Do not populate angles 15, 30, 45, 60, or 75 degrees with endpoint interpolation. Retrieve Lanham (1979), ASD-TR-79-5004, and check NASA CR-166537 / Bell Report 301-199-002 for required inputs.</action>
+    </flag>
+    <flag id="R12" severity="check" parameters="inertia_product_terms">
+      <entry source="NotebookLM audit" value="Products of inertia missing" />
+      <action>The extracted endpoint table provides Ixx, Iyy, and Izz only. Ixz is not reported at either endpoint, and no other products are present in the extracted table. Keep these unknown rather than assuming zero.</action>
+    </flag>
+  </review_flags>
+</xv15_dataset>

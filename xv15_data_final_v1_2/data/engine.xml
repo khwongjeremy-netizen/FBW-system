@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  
+  
+  <engine_data source="S2" engine_description="Lycoming LTC1K-4K / T53-L-13B Mod" location="sec. 6.2, p. 37">
+    
+    <power_rating name="contingency" unit="SHP" duration="2 min" condition="sea-level standard day">1802</power_rating>
+    
+    <power_rating name="takeoff" unit="SHP" duration="10 min" condition="sea-level standard day">1550</power_rating>
+    
+    <power_rating name="military" unit="SHP" duration="30 min" condition="sea-level standard day">1401</power_rating>
+    
+    <power_rating name="normal_continuous" unit="SHP" condition="sea-level standard day">1250</power_rating>
+    
+    <specific_fuel_consumption name="contingency" unit="lb/(SHP*h)">0.564</specific_fuel_consumption>
+    
+    <specific_fuel_consumption name="takeoff" unit="lb/(SHP*h)">0.584</specific_fuel_consumption>
+    
+    <specific_fuel_consumption name="normal_continuous" unit="lb/(SHP*h)">0.622</specific_fuel_consumption>
+    
+    <comment>
+      - Ratings retained: 1802 SHP contingency for 2 min; 1550 SHP takeoff for 10 min; 1401 SHP military for 30 min; 1250 SHP normal-continuous rating.
+      - The supplied NotebookLM table calls 1250 SHP “Max Continuous”; the existing S2 extraction calls it “normal_continuous”. Preserve this naming difference until the original heading is checked.
+      - S3 is listed as an additional source in the supplied table, but no page/table citation was provided. Do not treat the S3 attribution as pinpoint-verified.
+    </comment>
+  </engine_data>
+</xv15_dataset>

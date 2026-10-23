@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  <data_gaps>
+    <gap id="G1" priority="high" parameter="intermediate_angle_inertias">Ixx, Iyy, Izz at nacelle angles 15, 30, 45, 60, 75 deg are not tabulated in the reviewed sources.</gap>
+    <gap id="G2" priority="high" parameter="inertia_transformation_equation">No explicit closed-form source equation for aircraft inertia as a function of nacelle angle was found.</gap>
+    <gap id="G3" priority="high" parameter="aerodynamic_lookup_arrays">Full numeric CL(alpha), CD(alpha), and Cm(alpha) tables/arrays are not present in the supplied extraction; curve plots and metadata alone are insufficient for a source-faithful lookup table.</gap>
+    <gap id="G4" priority="medium" parameter="curve_digitization">Digitized coordinates from NASA CR-166536 Figures 8, 11, 15, and other relevant figures remain to be extracted and independently checked.</gap>
+    <gap id="G5" priority="medium" parameter="wake_interference_model_details">The 60-knot wake-interference boundary is reported from a summary record; inspect the full report before coding a hard cutoff.</gap>
+    <gap id="G6" priority="high" parameter="inertia_component_properties">Moving pylon/nacelle/rotor assembly centre of mass, own-axis inertia tensor, and mass breakdown needed for a defensible angle-dependent inertia calculation are missing.</gap>
+    <gap id="G7" priority="high" parameter="inertia_spindle_and_CG_geometry">Conversion spindle station line and water line, baseline CG water line, and full component-to-aircraft coordinate definitions are not numerically available in the reviewed extraction.</gap>
+    <gap id="G8" priority="high" parameter="endpoint_product_of_inertia">I_xz is not reported in the extracted endpoint table at 0 or 90 degrees; other products of inertia are also not supplied.</gap>
+    <gap id="G9" priority="high" parameter="historical_inertia_baseline_validity">NASA CR-166536 reportedly flags XV-15 inertias as outdated due to omitted airframe modifications and flight-test instrumentation mass/location; applicability to the intended simulation configuration must be resolved.</gap>
+    <gap id="G10" priority="high" parameter="flight_test_inertia_identification_details">NASA TM-89428 quantitative pitch/yaw inertia findings need exact page/table and original-source verification; supplied audit notes omitted nose/tail ballast as a cause of mismatch.</gap>
+    <gap id="G11" priority="medium" parameter="Lanham_method_access">Lanham (1979), ASD-TR-79-5004, is cited by NASA CR-166536 but is absent from reviewed sources; retrieve it to determine the documented method and required inputs.</gap>
+    <gap id="G12" priority="medium" parameter="XV15_original_weight_balance_records">Bell Helicopter Report 301-199-002 and NASA CR-166537 are suggested leads for source data/software implementation but have not been accessed or verified.</gap>
+  </data_gaps>
+</xv15_dataset>

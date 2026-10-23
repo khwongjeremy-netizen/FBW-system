@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2"><aerodynamics>
+  <wing_pylon_coefficients status="partially_verified" source="S4">
+    <lift_curve figure="8" location="printed p. 28 / PDF p. 32" alpha_range_deg="-40 to +40" coefficient_range="-1.2 to +2.0" nacelle_angles_deg="0 90" flap_flaperon_settings_deg="0/0; 40/25">
+      <approximate_lift_slope unit="per_deg">0.085</approximate_lift_slope><approximate_lift_slope unit="per_rad">4.87</approximate_lift_slope><approximate_zero_lift_angle unit="deg">-2.5</approximate_zero_lift_angle><approximate_stall_angle unit="deg">14</approximate_stall_angle><approximate_max_lift flap_flaperon="0/0">1.35</approximate_max_lift><approximate_max_lift flap_flaperon="40/25">1.62</approximate_max_lift>
+    </lift_curve>
+    <drag_curve figure="11" location="printed p. 31 / PDF p. 35" alpha_range_deg="-40 to +40" coefficient_range="0.0 to 1.4" nacelle_angles_deg="0 90" flap_flaperon_settings_deg="0/0; 40/25"/>
+    <lift_compressibility_corrections figure="9" location="printed p. 29 / PDF p. 33" mach_cases="0-0.2; 0.4; 0.5; 0.6"/>
+    <drag_compressibility_corrections figure="12" location="printed p. 32 / PDF p. 36" mach_cases="0-0.2; 0.4; 0.5; 0.6"/>
+    <large_negative_angle_lift figure="10" location="printed p. 30 / PDF p. 34" alpha_range_deg="-100 to 0" flap_flaperon="40/25"/>
+    <large_angle_drag figure="13" location="printed p. 33 / PDF p. 37" alpha_range_deg="-100 to +100"/>
+    <numerical_lookup_arrays status="not_in_supplied_extraction">Appendix B is reported to contain discrete coefficient tables, but actual numerical arrays were not included. Do not generate fake lookup tables from figure metadata.</numerical_lookup_arrays>
+  </wing_pylon_coefficients>
+  <pitching_moment_coefficient source="S4" status="partially_verified" definition="Cm_WP = f(beta_m, delta_F)" location="Appendix A, subsystem 4, Table 4-VIII, printed pp. A-47, A-53, A-71 / PDF pp. 197, 203, 221"><note>Cm_WP is chosen at CL_WP approximately 0. Numerical table values are not reproduced in supplied extraction.</note></pitching_moment_coefficient>
+  <horizontal_stabilizer source="S4" status="curve_metadata_only" figure_lift="15" figure_drag="16" location="printed pp. 36-37 / PDF pp. 40-41">
+    <airfoil>NACA 64A015</airfoil><aspect_ratio>3.28</aspect_ratio><area unit="ft^2">50.25</area><lift_slope unit="per_deg">0.071</lift_slope><lift_slope unit="per_rad">4.07</lift_slope><angle_of_attack_range unit="deg">-40 to +40</angle_of_attack_range><elevator_deflections unit="deg">-20 -15 -10 0 10 15 20</elevator_deflections><drag_elevator_derivative unit="per_deg">0.0034</drag_elevator_derivative>
+    <note>Curve coordinates and full coefficient arrays are not present in supplied extraction.</note>
+  </horizontal_stabilizer>
+</aerodynamics></xv15_dataset>

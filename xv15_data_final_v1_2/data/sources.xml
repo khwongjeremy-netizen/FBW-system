@@ -1,0 +1,42 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  <sources>
+    <source id="S1" title="XV-15 Tiltrotor" author="NASA" date="2003-09-11" url="https://www.nasa.gov/aeronautics/nasa-aircraft/xv-15-tiltrotor/">
+      <comment>
+        - Original NASA overview page.
+        - Several entries in the initial inventory were attributed to this source.
+      </comment>
+    </source>
+    <source id="S2" title="NASA/Army XV-15 Tilt Rotor Research Aircraft Familiarization Document" author="NASA" date="1975-01" report="NASA TM-X-62407" url="https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf">
+      <comment>
+        - NotebookLM extraction identifies this as the source for the detailed engineering data below.
+        - Page and section references are recorded beside each value.
+        - Verify extracted values against the original report before treating them as validated model inputs.
+      </comment>
+    </source>
+    <source id="S3" title="History of the XV-15" author="NASA" report="NASA SP-2000-4517" url="https://ntrs.nasa.gov/api/citations/20000027499/downloads/20000027499.pdf">
+      <comment>NotebookLM supplied this report as a source for engine ratings, but its citation column did not identify a page, table, or figure.</comment>
+    </source>
+    <source id="S4" title="Generic Tilt-Rotor Simulation Math Model" author="NASA" report="NASA CR-166536" url="https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf">
+      <comment>NotebookLM cited this report for the hover wing-download claim; the supplied table did not include an exact page, equation, or figure citation.</comment>
+    </source>
+    <source id="S5" title="NASA TM-X-73158" author="NASA" report="NASA TM-X-73158" url="https://ntrs.nasa.gov/api/citations/19760023060/downloads/19760023060.pdf">
+      <comment>NotebookLM supplied this report for test rotor speeds; the exact table/page and full report title were not included in the supplied result.</comment>
+    </source>
+    <source id="S6" title="Measurement of tilt rotor VTOL rotor wake-airframe ground aerodynamic interference for application to real time flight simulation" author="T. M. Gaffey and M. D. Maisel" date="1974-04" report="AGARD CP-143 / NTRS Doc ID 19750005744" url="https://ntrs.nasa.gov/citations/19750005744">
+      <comment>NotebookLM audit reports a 60-knot boundary from the report summary record; original-report context should be checked before implementing a hard cutoff.</comment>
+    </source>
+    <source id="S7" title="Tischler Frequency-Response Identification of XV-15 Flight Dynamics" author="Mark B. Tischler" report="NASA TM-89428" url="https://ntrs.nasa.gov/">
+      <comment>NotebookLM audit reports this source identified baseline simulation inertia underestimates associated with omitted nose/tail ballast. Exact page, table, and source URL were not included in the supplied audit; locate and verify before quantitative use.</comment>
+    </source>
+    <source id="S8" title="Development and Validation of a Simulation for a Generic Tilt-Rotor Aircraft (GTRSIM) Program" author="Ferguson" report="NASA CR-166537" url="https://ntrs.nasa.gov/">
+      <comment>Companion report suggested by the supplied audit as a possible source for implementation details and simulation data deck printouts. Access and relevant pages not yet verified.</comment>
+    </source>
+    <source id="S9" title="Inertia Calculation Procedure for Preliminary Design" author="Charles Lanham" report="ASD-TR-79-5004, April 1979">
+      <comment>Cited as Reference 26 in NASA CR-166536, printed p. 53. Report is not included in the reviewed notebook sources; its equations and input data have not been inspected.</comment>
+    </source>
+    <source id="S10" title="V/STOL Tilt Rotor Research Aircraft. Volume 2: Stability and Control and Handling Qualities Analyses" author="Bell Helicopter" report="Report 301-199-002 (1973)">
+      <comment>Suggested by the supplied audit as a potential source for original manufacturer weight-and-balance data. Accession/access and relevant pages not yet verified.</comment>
+    </source>
+  </sources>
+</xv15_dataset>

@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<xv15_dataset aircraft="XV-15" dataset_version="1.2">
+  
+  <hover_control_response source="S2" condition="gross_weight_13000_lb; aft_CG; unless_noted" location="table 8.3.2, p. 62">
+    
+    <control_sensitivity axis="pitch" scas="off" unit="rad/s^2/in">0.350</control_sensitivity>
+    
+    <control_sensitivity axis="roll" scas="off" unit="rad/s^2/in">0.471</control_sensitivity>
+    
+    <control_sensitivity axis="yaw" scas="off" unit="rad/s^2/in">0.132</control_sensitivity>
+    
+    <damping axis="pitch" scas="off" unit="1/s">0.85</damping>
+    
+    <damping axis="pitch" scas="on" unit="1/s">1.54</damping>
+    
+    <damping axis="roll" scas="off" unit="1/s">0.77</damping>
+    
+    <damping axis="roll" scas="on" unit="1/s">1.82</damping>
+    
+    <damping axis="yaw" scas="off" unit="1/s">0.116</damping>
+    
+    <damping axis="yaw" scas="on" unit="1/s">2.5</damping>
+    
+    <comment>
+      - Conditions: gross weight 13000 lb, aft CG, hover response unless the source table notes otherwise.
+      - Sensitivity values are listed with SCAS off; damping is listed with SCAS both off and on.
+      - These are condition-specific response figures, not universal constants or complete control laws.
+      - The supplied NotebookLM table did not provide additional numerical response values beyond those already stored here.
+    </comment>
+  </hover_control_response>
+</xv15_dataset>
