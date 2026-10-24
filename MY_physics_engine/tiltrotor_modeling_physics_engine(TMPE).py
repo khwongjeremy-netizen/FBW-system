@@ -11,6 +11,7 @@ from zipfile import Path
 import numpy as np 
 import scipy as sp 
 import matplotlib.pyplot as plt
+from pathlib import Path
 import xml.etree.ElementTree as ET
 '''
 pip3 install numpy
@@ -22,7 +23,11 @@ pip3 install matplotlib
 #importing necessary data(Import)
 #==================================================
 PROJECTDIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECTDIR / "data"
+DATA_DIR = PROJECTDIR / "xv15_data_final_v1_2"
+
+print("Looking for data in:", DATA_DIR)
+print("Folder exists:", DATA_DIR.exists())
+print("XML files found:", len(list(DATA_DIR.rglob("*.xml"))))
 
 def inspect_xml_files():
 
