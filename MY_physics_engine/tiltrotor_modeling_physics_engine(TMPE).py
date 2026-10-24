@@ -23,7 +23,7 @@ pip3 install matplotlib
 #importing necessary data(Import)
 #==================================================
 PROJECTDIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECTDIR / "xv15_data_final_v1_2"
+DATA_DIR = PROJECTDIR / "data(v.2)"
 
 print("Looking for data in:", DATA_DIR)
 print("Folder exists:", DATA_DIR.exists())
