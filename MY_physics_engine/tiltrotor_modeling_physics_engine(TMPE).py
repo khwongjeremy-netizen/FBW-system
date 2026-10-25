@@ -10,7 +10,7 @@ from zipfile import Path
 
 import numpy as np 
 import scipy as sp 
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt 
 from pathlib import Path
 import xml.etree.ElementTree as ET
 '''
@@ -22,6 +22,7 @@ pip3 install matplotlib
 
 #importing necessary data(Import)
 #==================================================
+'''
 PROJECTDIR = Path(__file__).resolve().parent
 DATA_DIR = PROJECTDIR / "data(v.2)"
 
@@ -56,9 +57,38 @@ def inspect_xml_files():
                 f"Value: {value} |"
                 f" Attributes: {element.attrib}"
                 )
+'''
 #==================================================
 
 #Physics engine logic(PEL)
 #==================================================
-if __name__ == "__main__":
-    inspect_xml_files()
+g = 9.80665 #m/s^2 gravity 
+class Environment: 
+    def __init__(self):
+        self.windspeed = 5 #m\s
+        self.winddirection = 180.0
+        self.Airdensity = 1.225 #kg/m^3
+        self.temperature = 15 #degrees
+        self.altitude = 0 #m above sea level 
+
+#TEST
+#==================================================
+# Time samples
+t = np.linspace(0, 10, 200)
+
+# Example path in 3D space (metres)
+x = 2 * t
+y = np.sin(t)
+z = 0.5 * t**2
+
+# Create a 3D plot
+fig = plt.figure()
+ax = fig.add_subplot(111, projection="3d")
+
+ax.plot(x, y, z)
+ax.set_xlabel("X (m)")
+ax.set_ylabel("Y (m)")
+ax.set_zlabel("Z (m)")
+ax.set_title("Example 3D Trajectory")
+
+plt.show()
