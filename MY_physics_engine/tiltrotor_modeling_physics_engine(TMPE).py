@@ -13,6 +13,8 @@ import scipy as sp
 import matplotlib.pyplot as plt 
 from pathlib import Path
 import xml.etree.ElementTree as ET
+import re
+import math
 '''
 pip3 install numpy
 pip3 install scipy
@@ -82,6 +84,8 @@ class Environment:
         self.temperature = 15 #degrees
         self.altitude = 0 #m above sea level 
 
+#Aircraft physical varaibles
+#==================================================
 class aircraft_values: 
     def __init__(self):
         #designed weight of xv-15
@@ -111,3 +115,11 @@ class aircraft_values:
         self.rotor_solidity = fetchpara("rotor.xml", "proprotor_and_drive_system/rotor_solidity")
         self.rotor_hub_precone_angle = fetchpara("rotor.xml", "proprotor_and_drive_system/hub_precone_angle")  # deg
         self.rotor_hub_positions = None  # Exact 3D coordinates not supplied
+
+#Pilot commands
+#==================================================
+pilot_command = {
+    "request": "takeoff",
+    "flight_mode": "helicopter",
+    "target_vertical_speed": 2.0,  # m/s; simulator test target
+}
