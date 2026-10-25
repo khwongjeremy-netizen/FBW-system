@@ -48,5 +48,31 @@
       
       <pedal_travel unit="in">±2.5</pedal_travel>
     </pilot_controls>
+    <!-- Sources: S1, NASA TM-X-62407; S3, NASA SP-2000-4517 -->
+
+    <nacelle_conversion>
+        <minimum_angle unit="deg">0.0</minimum_angle>
+        <maximum_angle unit="deg">95.0</maximum_angle>
+        <normal_conversion_rate unit="deg_per_s">7.5</normal_conversion_rate>
+        <reduced_conversion_rate unit="deg_per_s">1.5</reduced_conversion_rate>
+    </nacelle_conversion>
+
+    <control_surface_limits>
+        <elevator unit="deg" minimum="-20.0" maximum="20.0"/>
+        <rudder unit="deg" minimum="-20.0" maximum="20.0"/>
+        <flaperon_roll_travel unit="deg"
+                              up="23.8"
+                              down="13.8"/>
+    </control_surface_limits>
+
+    <horizontal_tail_trim>
+        <minimum_incidence unit="deg">0.0</minimum_incidence>
+        <maximum_incidence unit="deg">6.0</maximum_incidence>
+    </horizontal_tail_trim>
+
+    <!-- Missing: control effectiveness derivatives and the
+        flight-control-system mapping from pilot commands to
+        actuator positions. Mechanical limits alone do not provide
+        that mapping. -->
   </control_surfaces>
 </xv15_dataset>

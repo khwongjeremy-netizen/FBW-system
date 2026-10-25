@@ -13,5 +13,41 @@
     <gap id="G10" priority="high" parameter="flight_test_inertia_identification_details">NASA TM-89428 quantitative pitch/yaw inertia findings need exact page/table and original-source verification; supplied audit notes omitted nose/tail ballast as a cause of mismatch.</gap>
     <gap id="G11" priority="medium" parameter="Lanham_method_access">Lanham (1979), ASD-TR-79-5004, is cited by NASA CR-166536 but is absent from reviewed sources; retrieve it to determine the documented method and required inputs.</gap>
     <gap id="G12" priority="medium" parameter="XV15_original_weight_balance_records">Bell Helicopter Report 301-199-002 and NASA CR-166537 are suggested leads for source data/software implementation but have not been accessed or verified.</gap>
+    <!-- Source limitations identified by the TMPE data audit. -->
+
+    <gap parameter="cg_waterline_nominal">
+        Nominal CG waterline coordinate not verified.
+        Required for a complete 3D mass-property reference.
+    </gap>
+
+    <gap parameter="intermediate_angle_inertia">
+        Moments and products of inertia at intermediate nacelle
+        angles are unavailable. A documented component-based
+        transformation method and component mass properties are needed.
+    </gap>
+
+    <gap parameter="pylon_spindle_station_waterline">
+        Pylon spindle station and waterline coordinates are unverified.
+    </gap>
+
+    <gap parameter="rotor_thrust_torque_model">
+        Verified rotor thrust and torque coefficient data, blade
+        pitch distribution, and sufficient aerodynamic inputs are missing.
+    </gap>
+
+    <gap parameter="aerodynamic_lookup_tables">
+        Complete numerical CL(alpha), CD(alpha), and Cm(alpha)
+        tables and their control-deflection dependencies are missing.
+    </gap>
+
+    <gap parameter="control_effectiveness">
+        Verified derivatives or mappings from actuator deflections
+        to aircraft forces and moments are missing.
+    </gap>
+
+    <gap parameter="rotor_hub_coordinates">
+        Exact three-dimensional rotor hub positions relative to
+        the aircraft reference frame are unavailable.
+    </gap>
   </data_gaps>
 </xv15_dataset>

@@ -16,4 +16,34 @@
     <airfoil>NACA 64A015</airfoil><aspect_ratio>3.28</aspect_ratio><area unit="ft^2">50.25</area><lift_slope unit="per_deg">0.071</lift_slope><lift_slope unit="per_rad">4.07</lift_slope><angle_of_attack_range unit="deg">-40 to +40</angle_of_attack_range><elevator_deflections unit="deg">-20 -15 -10 0 10 15 20</elevator_deflections><drag_elevator_derivative unit="per_deg">0.0034</drag_elevator_derivative>
     <note>Curve coordinates and full coefficient arrays are not present in supplied extraction.</note>
   </horizontal_stabilizer>
+  <!-- Sources: S1, NASA TM-X-62407; S2, NASA CR-166536 -->
+
+  <lifting_surfaces>
+      <wing>
+          <airfoil>NACA 64A223 (Mod)</airfoil>
+          <lift_curve_slope unit="per_deg">0.085</lift_curve_slope>
+          <zero_lift_angle unit="deg">-2.5</zero_lift_angle>
+          <stall_angle unit="deg">14.0</stall_angle>
+          <maximum_lift_coefficient condition="clean">1.35</maximum_lift_coefficient>
+          <maximum_lift_coefficient condition="flap_40_flaperon_25">1.62</maximum_lift_coefficient>
+      </wing>
+
+      <horizontal_tail>
+          <airfoil>NACA 64A015</airfoil>
+      </horizontal_tail>
+
+      <vertical_tail>
+          <airfoil>NACA 0009</airfoil>
+      </vertical_tail>
+  </lifting_surfaces>
+
+  <!-- Wake-interference observation from the cited sources.
+      Treat as a model boundary, not a universal physical cutoff. -->
+  <wake_interference>
+      <negligible_interference_airspeed unit="knots">60.0</negligible_interference_airspeed>
+  </wake_interference>
+
+  <!-- Missing: complete CL(alpha), CD(alpha), Cm(alpha) lookup tables,
+      including post-stall behaviour and control-deflection effects.
+      Do not invent interpolation points. -->
 </aerodynamics></xv15_dataset>

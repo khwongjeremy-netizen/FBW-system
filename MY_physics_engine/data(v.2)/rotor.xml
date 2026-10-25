@@ -30,6 +30,40 @@
     <test_rotor_speed mode="hover" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">589</test_rotor_speed>
     <test_rotor_speed mode="cruise" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">517</test_rotor_speed>
     
+        <!-- Sources: S1, NASA TM-X-62407; S3, NASA SP-2000-4517 -->
+
+    <!-- Blade geometry -->
+    <blade_twist unit="deg" status="reported_nonlinear">-45.0</blade_twist>
+    <pitch_flap_coupling unit="deg">-15.0</pitch_flap_coupling>
+    <mechanical_flapping_limit unit="deg">12.0</mechanical_flapping_limit>
+
+    <!-- Rotor operating speeds -->
+    <rotor_speeds>
+        <design_hover unit="rpm">565</design_hover>
+        <flight_test_hover unit="rpm">589</flight_test_hover>
+        <design_cruise unit="rpm">458</design_cruise>
+        <flight_test_cruise unit="rpm">517</flight_test_cruise>
+    </rotor_speeds>
+
+    <!-- Drive system -->
+    <engine_to_rotor_gear_ratio>35.11</engine_to_rotor_gear_ratio>
+    <interconnect_gear_ratio>3.10</interconnect_gear_ratio>
+
+    <!-- Reported hover wing-download penalty.
+        Applies to the stated flap/flaperon configuration and
+        hover condition; do not assume it applies universally. -->
+    <wing_download>
+        <fraction>0.07</fraction>
+        <flap_angle unit="deg">40</flap_angle>
+        <flaperon_angle unit="deg">25</flaperon_angle>
+        <condition>out_of_ground_effect_hover</condition>
+        <!-- Source: S1, Section 5.1, p. 26 -->
+    </wing_download>
+
+    <!-- Missing rotor model inputs:
+        blade pitch distribution, verified thrust/torque coefficient
+        maps, and full rotor aerodynamic performance data.
+        See data_gaps.xml. -->
     <comment>
       - The rotor-disc area is reported per rotor.
       - RPM and tip-speed values are tied to the stated design modes; do not assume one RPM applies throughout conversion.
