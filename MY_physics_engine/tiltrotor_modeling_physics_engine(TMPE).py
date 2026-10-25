@@ -123,3 +123,104 @@ pilot_command = {
     "flight_mode": "helicopter",
     "target_vertical_speed": 2.0,  # m/s; simulator test target
 }
+
+#running calculations and physics
+#==================================================
+def calculate_lift(
+    air_density,
+    airspeed,
+    reference_area,
+    lift_coefficient,
+):
+    """
+    Calculate aerodynamic lift.
+
+    Equation:
+        L = 0.5 * rho * V**2 * S * CL
+
+    Missing-data policy:
+        Do not invent CL when the required aerodynamic
+        coefficient is unavailable.
+    """
+
+    if lift_coefficient is None:
+        raise NotImplementedError(
+            "Missing lift coefficient: "
+            "a verified XV-15 aerodynamic model is required."
+        )
+
+    return (
+        0.5
+        * air_density
+        * airspeed**2
+        * reference_area
+        * lift_coefficient
+    )
+
+# Physics output -> Text response
+#==================================================
+def explain_lift(
+    lift_force,
+    airspeed,
+    air_density,
+    reference_area,
+    lift_coefficient,
+):
+    """
+    Convert the aerodynamic lift calculation into a
+    readable explanation.
+
+    Missing values remain unknown; they are not guessed.
+    """
+
+    # Check whether the required physical variables exist.
+    missing_variables = []
+
+    if airspeed is None:
+        missing_variables.append("airspeed")
+    if air_density is None:
+        missing_variables.append("air density")
+    if reference_area is None:
+        missing_variables.append("reference area")
+    if lift_coefficient is None:
+        missing_variables.append("lift coefficient")
+
+    # Do not report a numerical lift value if inputs are missing.
+    if missing_variables:
+        missing_text = ", ".join(missing_variables)
+
+        return (
+            "Aerodynamic lift cannot currently be calculated "
+            f"because these variables are missing: {missing_text}. "
+            "The lift equation is defined, but the numerical "
+            "result remains unknown until these values are supplied."
+        )
+
+    # The inputs exist, but the calculation might not have been run.
+    if lift_force is None:
+        return (
+            "The variables required for lift are available, "
+            "but no lift force has been calculated yet."
+        )
+
+    # Convert the force from newtons to kilonewtons for readability.
+    lift_kN = lift_force / 1000
+
+    # Describe the result.
+    response = (
+        f"The calculated aerodynamic lift is {lift_force:.2f} N "
+        f"({lift_kN:.3f} kN).\n"
+        f"This result uses an airspeed of {airspeed:.2f} m/s, "
+        f"an air density of {air_density:.3f} kg/m^3, "
+        f"a reference area of {reference_area:.3f} m^2, "
+        f"and a lift coefficient of {lift_coefficient:.4f}.\n"
+    )
+
+    # Lift is not necessarily enough to keep the aircraft airborne.
+    response += (
+        "This is the aerodynamic lift represented by the equation. "
+        "It does not include rotor thrust, and it does not by itself "
+        "determine whether the aircraft can take off."
+    )
+
+    return response
