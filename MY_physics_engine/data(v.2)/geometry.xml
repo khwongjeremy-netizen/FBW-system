@@ -82,4 +82,7 @@
   <tail_geometry source="S2" location="sec. 3.3, printed p. 12 / PDF p. 15"><horizontal_tail><area_ft2>50.25</area_ft2><span_ft>12.83</span_ft><chord_ft>3.92</chord_ft><mean_aerodynamic_chord_ft>3.92</mean_aerodynamic_chord_ft><aspect_ratio>3.27</aspect_ratio><incidence_deg>0 to +6</incidence_deg><dihedral_deg>0</dihedral_deg><quarter_chord_sweep_deg>0</quarter_chord_sweep_deg><naca_section>64A015</naca_section><tail_length_ft>22.4</tail_length_ft></horizontal_tail><vertical_tail><area_ft2>50.5</area_ft2><span_ft>7.68</span_ft><chord_root_ft>4.09</chord_root_ft><chord_tip_ft>2.40</chord_tip_ft><mean_aerodynamic_chord_ft>3.72</mean_aerodynamic_chord_ft><aspect_ratio>2.33</aspect_ratio><quarter_chord_sweep_upper_deg>31.6</quarter_chord_sweep_upper_deg><naca_section>0009</naca_section><tail_length_ft>23.2</tail_length_ft></vertical_tail><note>Transcribed from supplied extraction. Horizontal-tail incidence is reported as 0 to +6 deg, hinged at 33% chord; check original table footnotes before detailed geometry implementation.</note></tail_geometry></geometry>
 </xv15_dataset>
 
-#
+<!-- No fuselage_width-->
+<!--No fuselage_height-->
+
+<!-- no rotor_radius-->

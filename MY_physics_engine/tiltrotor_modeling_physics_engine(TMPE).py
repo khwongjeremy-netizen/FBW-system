@@ -65,39 +65,6 @@ def fetchpara(filename, tag_path, attribute=None):
         return float(value)
     except ValueError:
         return value.strip()
-'''
-print("Looking for data in:", DATA_DIR)
-print("Folder exists:", DATA_DIR.exists())
-print("XML files found:", len(list(DATA_DIR.rglob("*.xml"))))
-
-def inspect_xml_files():
-
-    xml_files = sorted(DATA_DIR.rglob("*.xml"))
-
-    if not xml_files:
-        raise FileNotFoundError(
-            f"No XML files found in: {DATA_DIR}"
-        )
-
-    for file_path in xml_files:
-        print(f"\n --- {file_path.relative_to(DATA_DIR)} ---")
-
-        tree = ET.parse(file_path)
-        root = tree.getroot()
-
-        for element in root.iter():
-            if element is root:
-                continue
-
-        value = (element.text or "").strip()
-
-        if value:
-            print(
-                f"Tag: {element.tag} | " 
-                f"Value: {value} |"
-                f" Attributes: {element.attrib}"
-                )
-'''
 #==================================================
 
 #==================================================
@@ -119,25 +86,66 @@ class aircraft_values:
     def __init__(self):
         #designed weight of xv-15
         self.designgross = fetchvalue("mass.xml", "design_gross")
-        # Wing geometry
-        self.wing_span = fetchpara("geometry.xml", "geometry/wing/span")
-        self.wing_reference_area = fetchpara("geometry.xml", "geometry/wing/area")
-        self.wing_mean_chord = fetchpara("geometry.xml", "geometry/wing/chord")
+       # Wing geometry — geometry.xml
+        self.wing_span = fetchpara(
+        "geometry.xml", "geometry/wing/span"
+        )  # ft
+
+        self.wing_reference_area = fetchpara(
+        "geometry.xml", "geometry/wing/area"
+        )  # ft^2
+
+        self.wing_mean_chord = fetchpara(
+        "geometry.xml", "geometry/wing/chord"
+        )  # ft
+
+        self.wing_aspect_ratio = fetchpara(
+        "geometry.xml", "geometry/wing/aspect_ratio"
+        )
+
+        self.wing_incidence = fetchpara(
+        "geometry.xml", "geometry/wing/incidence"
+        )  # deg
+
+        self.wing_dihedral = fetchpara(
+        "geometry.xml", "geometry/wing/dihedral"
+        )  # deg
+
+        self.wing_sweep = fetchpara(
+        "geometry.xml", "geometry/wing/quarter_chord_sweep"
+        )  # deg
+
 
         # Fuselage geometry
-        self.fuselage_length = fetchpara("geometry.xml", "geometry/fuselage", "length")
-        self.fuselage_width = None   # Not provided in the supplied XML
-        self.fuselage_height = None  # Not provided in the supplied XML
+        self.fuselage_length = fetchpara(
+        "geometry.xml", "geometry/fuselage", "length"
+        )  # ft
 
-        # Rotor geometry
-        self.rotor_radius = None          # Rotor diameter not established by this XML
-        self.rotor_hub_positions = None   # Exact 3D coordinates not provided
+        self.fuselage_width = None   # Not supplied
+        self.fuselage_height = None  # Not supplied
 
-        # Tail geometry
-        self.horizontal_tail_area = fetchpara(
-            "geometry.xml", "geometry/horizontal_tail/area"
+        self.rotor_tip_to_tip_span = fetchpara(
+        "geometry.xml", "geometry/rotor_tip_to_tip_span", "value"
+        )  # ft; definition needs verification
+
+        self.maximum_fin_height = fetchpara(
+        "geometry.xml", "geometry/maximum_fin_height", "value"
+        )  # ft
+
+
+        # Rotor geometry — rotor.xml
+        self.rotor_diameter = fetchpara(
+        "rotor.xml",
+        "proprotor_and_drive_system/rotor_diameter"
+        )  # ft
+
+        self.rotor_radius = self.rotor_diameter / 2  # ft
+
+        self.rotor_blades_per_hub = fetchpara(
+        "rotor.xml",
+        "proprotor_and_drive_system/rotor_blades_per_hub"
         )
-        self.vertical_tail_area = fetchpara(
-            "geometry.xml", "geometry/vertical_tail/total_area"
-        )
-                                                
+
+        self.rotor_disc_area_per_rotor = fetchpara(
+        "rotor.xml",
+                                        
