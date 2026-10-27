@@ -166,3 +166,145 @@ def ask_float(prompt, default=None, minimum=None):
             continue
 
         return value
+
+
+# ============================================================
+# 4. MAIN PROGRAM — CONNECT THE COMPONENTS
+# ============================================================
+
+def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
+    """
+    Calculate wing lift using:
+    L = 0.5 * rho * V^2 * S * CL
+
+    Returns None if required parameters are unknown.
+    """
+    if None in (air_density, airspeed, wing_area_m2, lift_coefficient):
+        return None
+
+    if air_density < 0 or airspeed < 0 or wing_area_m2 <= 0:
+        raise ValueError("Density and airspeed must be non-negative; wing area must be positive.")
+
+    return 0.5 * air_density * airspeed**2 * wing_area_m2 * lift_coefficient
+
+
+def main():
+    print("\n" + "=" * 55)
+    print(" TMPE — TILTROTOR MODELING PHYSICS ENGINE")
+    print("=" * 55)
+
+    # 1. Load aircraft parameters from XML.
+    print("\n[1/3] Loading XV-15 aircraft data...")
+    aircraft = Aircraft()
+
+    # 2. Collect pilot commands.
+    print("\n[2/3] Enter pilot commands.")
+
+    command = ask_text(
+        "Command (hover / takeoff / move_forward / land)",
+        "hover"
+    ).lower()
+
+    flight_mode = ask_text(
+        "Flight mode (helicopter / transition / airplane)",
+        "helicopter"
+    ).lower()
+
+    airspeed = ask_float(
+        "Airspeed (m/s; Enter if unknown)",
+        default=None,
+        minimum=0
+    )
+
+    lift_coefficient = ask_float(
+        "Wing lift coefficient CL (Enter if unknown)",
+        default=None
+    )
+
+    # 3. Collect environmental conditions.
+    print("\n[3/3] Enter environmental conditions.")
+
+    density = ask_float(
+        "Air density (kg/m^3)",
+        default=1.225,
+        minimum=0
+    )
+
+    windspeed = ask_float(
+        "Wind speed (m/s)",
+        default=5.0,
+        minimum=0
+    )
+
+    wind_direction = ask_float(
+        "Wind direction (degrees)",
+        default=180.0
+    )
+
+    temperature = ask_float(
+        "Temperature (degrees C)",
+        default=15.0
+    )
+
+    altitude = ask_float(
+        "Altitude (m)",
+        default=0.0
+    )
+
+    environment = Environment(
+        windspeed=windspeed,
+        winddirection=wind_direction,
+        air_density=density,
+        temperature=temperature,
+        altitude=altitude
+    )
+
+    # Calculate wing lift only when the required inputs are known.
+    lift = calculate_lift(
+        environment.air_density,
+        airspeed,
+        aircraft.wing_area_m2,
+        lift_coefficient
+    )
+
+    # Display results.
+    print("\n" + "=" * 55)
+    print(" TMPE — SIMULATION INPUT REPORT")
+    print("=" * 55)
+
+    print(f"Pilot command:       {command}")
+    print(f"Selected mode:       {flight_mode}")
+    print(f"Air density:         {environment.air_density} kg/m^3")
+    print(f"Wind speed:          {environment.windspeed} m/s")
+    print(f"Wind direction:      {environment.winddirection} degrees")
+    print(f"Temperature:         {environment.temperature} C")
+    print(f"Altitude:            {environment.altitude} m")
+
+    print("\n--- Aircraft data ---")
+    print(f"Design gross:        {aircraft.design_gross}")
+    print(f"Wing span:           {aircraft.wing_span_ft} ft")
+    print(f"Wing area:           {aircraft.wing_area_ft2} ft^2")
+    print(f"Wing area (SI):      {aircraft.wing_area_m2} m^2")
+    print(f"Rotor diameter:      {aircraft.rotor_diameter_ft} ft")
+    print(f"Rotor blades/hub:    {aircraft.rotor_blades_per_hub}")
+
+    print("\n--- Calculation ---")
+    if lift is None:
+        print("Wing lift: NOT CALCULATED")
+        print("Reason: airspeed, wing area, or CL is unknown.")
+    else:
+        print(f"Wing lift:           {lift:.2f} N")
+        print(f"Wing lift:           {lift / 1000:.3f} kN")
+
+    print("\n--- Model limitations ---")
+    print("Rotor thrust:        Not implemented")
+    print("Aircraft dynamics:   Not implemented")
+    print("Flight-by-wire:      Not implemented")
+    print("Actual trajectory:   Not calculated")
+
+    print("\nTMPE run complete.")
+    print("This is an educational prototype, not a validated flight simulator.")
+
+
+if __name__ == "__main__":
+    main()
