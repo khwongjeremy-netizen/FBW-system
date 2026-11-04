@@ -6,6 +6,9 @@ An independent Python project for learning how tiltrotor physics and pilot-assis
 
 TMPE is a hands-on project for building my understanding of the physical laws that shape tiltrotor flight and the software systems that can assist pilots. I use the XV-15 and its technical data as a basis for exploring those topics through code. The longer-term direction is to model aircraft forces and motion, then investigate simplified pilot-assistance and flight-by-wire (FBW) concepts. These systems are development goals; the current program does not implement them.
 
+> **Current state:** Early prototype; it recieves inputs and aircraft data but does not simulate aircraft responses or calculate accurate lift. 
+Much of the code and XML data is AI-generated and not systematically human-reviewed or fact-checked; errors may remain.
+
 ## Current features
 
 **Implemented**
@@ -86,7 +89,7 @@ The repository also includes `data(v.2).zip`. The program reads the data directo
 
 ## Limitations
 
-TMPE is **not a validated flight simulator**. The current version does not implement:
+TMPE is **not a validated flight simulator**. The current version also does not implement:
 
 - Rotor thrust, complete aerodynamic forces, or rotor–wing aerodynamic interactions.
 - A complete, verified lift-coefficient model or wing-lift calculation. The available lift-curve metadata is insufficient without angle of attack and coefficient lookup data.
