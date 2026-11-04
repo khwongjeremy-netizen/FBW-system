@@ -24,40 +24,35 @@ TMPE is a hands-on project for building my understanding of the physical laws th
 
 - `try_load()` warns on missing or invalid values and leaves them unknown (`None`).
 
-- Stores environment inputs: 
-    - wind 
-    - density
-    - temperature
-    - altitude 
-    and prompts for a command, flight-mode label, airspeed, and lift coefficient.
+- Prompts for a flight-mode label and pilot-command label, plus air density (kg/m³), wind speed (m/s), wind direction (degrees), temperature (°C), and altitude (m).
 
-- Calculates wing lift when all inputs are available and prints an input/result report.
+- Prints entered conditions and automatically loaded aircraft properties in an input report.
 
 **Partial**
 
 - `Aircraft` and `Environment` hold selected parameters and inputs. The program reports these values but does not use most of them in a physical model.
 
-- Wing area is converted from ft² to m². Other aircraft fields retain their XML units, including design gross weight in lb and geometry in ft.
+- Wing area is read from `geometry.xml` in ft²; the `Aircraft.wing_area_m2` property converts it to m² for future SI calculations. Other loaded fields retain XML units, including design gross weight in lb and geometry in ft.
 
 - The broader XML dataset contains additional research fields, but most are not loaded by the program.
 
 ## Technical approach
 
-The current calculation is the standard wing-lift equation:
+The intended wing-lift calculation is:
 
 ```
 L = 0.5 * ρ * V² * S * CL
 ```
 
-- `L`: wing lift (N) 
+- `L`: wing lift (N)
 - `ρ`: air density (kg/m³)
 - `V`: airspeed (m/s)
 - `S`: wing reference area (m²)
 - `CL`: dimensionless lift coefficient
 
-- Airspeed and `CL` are meant to be inputs. Missing required values skip the calculation; negative density or airspeed and nonpositive wing area are rejected.
+- `calculate_lift()` implements the equation, and `S` loads from XML, but the interactive program does not call the helper yet. `aerodynamics.xml` includes approximate lift-curve slope and zero-lift-angle metadata, but no complete verified `CL(α)` lookup data.
 
-- This is wing lift only. Wind, temperature, and altitude are recorded but do not adjust the calculation.
+- TMPE has no angle-of-attack or airspeed model, so it does not invent `CL` or request it from the pilot. Wind direction is stored in degrees, but its convention is not yet defined. Environment values do not determine airspeed or lift.
 
 - XML values include units and source metadata where available. Unknown values are not filled by guesswork; source notes flag data that still needs checking against original reports.
 
@@ -86,13 +81,15 @@ The repository also includes `data(v.2).zip`. The program reads the data directo
   python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py'
   ```
 
-- Follow the prompts. Press Enter to use displayed defaults or leave airspeed/`CL` unknown.
+- Enter an aircraft mode, a pilot-command label, then environmental values. Press Enter to accept displayed defaults.
+- Commands and modes are recorded only; they do not control simulated aircraft behavior.
 
 ## Limitations
 
 TMPE is **not a validated flight simulator**. The current version does not implement:
 
 - Rotor thrust, complete aerodynamic forces, or rotor–wing aerodynamic interactions.
+- A complete, verified lift-coefficient model or wing-lift calculation. The available lift-curve metadata is insufficient without angle of attack and coefficient lookup data.
 - Aircraft equations of motion, position/velocity/attitude integration, or transition physics.
 - Flight-by-wire laws or control of a real aircraft.
 - Validation against flight-test data. XML provenance and extracted parameter citations also require further verification.

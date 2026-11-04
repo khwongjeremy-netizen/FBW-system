@@ -10,11 +10,10 @@
 
 # ============================================================
 # TMPE — Tiltrotor Modeling Physics Engine
-# Version 0.1: interactive input, XML loading, lift calculation,
-# and readable output.
+# Interactive input and XML loading prototype.
 #
 # This is an educational prototype, NOT a validated flight simulator.
-# It does not yet calculate rotor thrust, aircraft motion, or FBW laws.
+# It does not yet calculate lift, rotor thrust, aircraft motion, or FBW laws.
 # ============================================================
 
 from pathlib import Path
@@ -168,16 +167,12 @@ def ask_float(prompt, default=None, minimum=None):
         return value
 
 
-# ============================================================
-# 4. MAIN PROGRAM — CONNECT THE COMPONENTS
-# ============================================================
-
 def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
-    """
-    Calculate wing lift using:
-    L = 0.5 * rho * V^2 * S * CL
+    """Calculate wing lift when supplied with model-derived inputs.
 
-    Returns None if required parameters are unknown.
+    L = 0.5 * rho * V^2 * S * CL
+    The interactive program does not call this until a verified CL model
+    and an airspeed source are available.
     """
     if None in (air_density, airspeed, wing_area_m2, lift_coefficient):
         return None
@@ -188,41 +183,32 @@ def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
     return 0.5 * air_density * airspeed**2 * wing_area_m2 * lift_coefficient
 
 
+# ============================================================
+# 4. MAIN PROGRAM — CONNECT THE COMPONENTS
+# ============================================================
+
 def main():
     print("\n" + "=" * 55)
     print(" TMPE — TILTROTOR MODELING PHYSICS ENGINE")
     print("=" * 55)
 
     # 1. Load aircraft parameters from XML.
-    print("\n[1/3] Loading XV-15 aircraft data...")
+    print("\nLoading XV-15 aircraft data...")
     aircraft = Aircraft()
 
-    # 2. Collect pilot commands.
-    print("\n[2/3] Enter pilot commands.")
-
-    command = ask_text(
-        "Command (hover / takeoff / move_forward / land)",
-        "hover"
-    ).lower()
-
+    # 2. Collect mode and command labels. These do not drive a flight model.
     flight_mode = ask_text(
         "Flight mode (helicopter / transition / airplane)",
         "helicopter"
     ).lower()
 
-    airspeed = ask_float(
-        "Airspeed (m/s; Enter if unknown)",
-        default=None,
-        minimum=0
-    )
-
-    lift_coefficient = ask_float(
-        "Wing lift coefficient CL (Enter if unknown)",
-        default=None
-    )
+    command = ask_text(
+        "Pilot command (label only; e.g. hover / takeoff / climb / move_forward / land)",
+        "hover"
+    ).lower()
 
     # 3. Collect environmental conditions.
-    print("\n[3/3] Enter environmental conditions.")
+    print("\nEnter environmental conditions.")
 
     density = ask_float(
         "Air density (kg/m^3)",
@@ -259,17 +245,9 @@ def main():
         altitude=altitude
     )
 
-    # Calculate wing lift only when the required inputs are known.
-    lift = calculate_lift(
-        environment.air_density,
-        airspeed,
-        aircraft.wing_area_m2,
-        lift_coefficient
-    )
-
     # Display results.
     print("\n" + "=" * 55)
-    print(" TMPE — SIMULATION INPUT REPORT")
+    print(" TMPE — INPUT REPORT")
     print("=" * 55)
 
     print(f"Pilot command:       {command}")
@@ -289,12 +267,9 @@ def main():
     print(f"Rotor blades/hub:    {aircraft.rotor_blades_per_hub}")
 
     print("\n--- Calculation ---")
-    if lift is None:
-        print("Wing lift: NOT CALCULATED")
-        print("Reason: airspeed, wing area, or CL is unknown.")
-    else:
-        print(f"Wing lift:           {lift:.2f} N")
-        print(f"Wing lift:           {lift / 1000:.3f} kN")
+    print("Wing area:           Loaded from geometry.xml when available")
+    print("Wing lift:           NOT CALCULATED")
+    print("Reason: no angle-of-attack input or complete, verified CL model is available.")
 
     print("\n--- Model limitations ---")
     print("Rotor thrust:        Not implemented")
