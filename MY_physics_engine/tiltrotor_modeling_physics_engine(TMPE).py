@@ -1,19 +1,26 @@
-#
-#     try:
-#         generate_report(aircraft, user_input)
-#     except ValueError as error:
-#         print(f"\n[CALCULATION ERROR] {error}")
-#
-#
-# if __name__ == "__main__":
-#     main()
-
 # ============================================================
 # TMPE — Tiltrotor Modeling Physics Engine
 # Interactive input and XML loading prototype.
 #
 # This is an educational prototype, NOT a validated flight simulator.
 # It does not yet calculate lift, rotor thrust, aircraft motion, or FBW laws.
+# ============================================================
+
+# ============================================================
+# QUICK WORD BANK
+# ============================================================
+# air_world  : Aircraft velocity relative to air, in north/east/down axes.
+# body_alpha : Angle of attack relative to the aircraft body (radians).
+# alpha      : Angle of attack relative to the wing, including incidence.
+# displayed  : Rounded text for printing; calculations keep full precision.
+# flow       : Dictionary holding airflow vectors, angles and their status.
+# aero       : Dictionary holding force availability and the force result.
+# None       : Unknown or unavailable; never a substitute for zero.
+#
+# BOTTOM REFERENCE GUIDE — search for these headings:
+#   A. HOW THE CODE WORKS       Step-by-step calculation and examples.
+#   B. DETAILED VARIABLE WORD BANK
+#   C. MISSING DATA AND CURRENT ISSUES
 # ============================================================
 
 from pathlib import Path
@@ -509,3 +516,283 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+# ======================================================================
+# +--------------------------------------------------------------------+
+# | TMPE REFERENCE GUIDE                                                |
+# | Read alongside the code; these comments do not run or print.         |
+# +--------------------------------------------------------------------+
+#
+# +--------------------------------------------------------------------+
+# | A. HOW THE CODE WORKS                                               |
+# +--------------------------------------------------------------------+
+#
+# 1. LOAD THE AIRCRAFT — Aircraft(), fetchvalue(), fetchpara(), try_load()
+#    - Read selected mass, geometry and rotor values from XML.
+#    - Convert wing area from ft² to m² when wing_area_m2 is requested.
+#    - Keep failed loads as None and print a data warning.
+#
+# 2. COLLECT THE SCENARIO — main(), Environment, ask_initial_state()
+#    - Ask for environmental conditions and prescribed velocity/attitude.
+#    - Flight mode and pilot command are labels only.
+#    - The state is a snapshot supplied by the user; motion is not simulated.
+#
+# 3. SUBTRACT WIND — wind_velocity_ned(), calculate_aoa()
+#    - Convert the wind's FROM direction into a velocity toward its destination.
+#    - air_world = ground_velocity_ned - wind, component by component.
+#    - Example: northward ground speed 10 m/s and northward wind 3 m/s
+#      give northward air-relative speed 7 m/s.
+#    - Airspeed is the length of air_world, including all three components.
+#    - Incoming airflow points opposite to this air-relative velocity.
+#
+# 4. CHANGE THE VIEWING AXES — world_to_body_matrix(), transform()
+#    - rotation turns the NED components into aircraft body components.
+#    - wing_rotation then accounts for the fixed wing mounting incidence.
+#    - air_world -> body -> wing describes the SAME velocity in three frames.
+#    - These rotations change its components, not its physical speed.
+#
+# 5. FIND THE ANGLE — calculate_aoa()
+#    - body_alpha = atan2(body down component, body forward component).
+#    - alpha = atan2(wing down component, wing forward component).
+#    - atan2 preserves forward/reverse-flow quadrants; angles are not clamped.
+#    - Example: level northbound flight, calm air, 3° wing incidence:
+#      body_alpha is 0° and wing alpha is 3°.
+#    - Wing AoA needs known incidence and enough forward/down-plane airflow.
+#      Purely sideways airflow can have airspeed but no defined wing AoA.
+#
+# 6. CHECK FORCE AVAILABILITY — wing_aerodynamics(), calculate_lift()
+#    - Exactly zero freestream speed produces a zero freestream force tuple.
+#    - Every nonzero speed currently returns an unavailable force result.
+#    - calculate_lift() contains L = 0.5 * density * airspeed² * area * CL,
+#      but main() does not call it: a supported CL model is still missing.
+#    - A valid AoA alone does not establish a valid lift coefficient.
+#
+# 7. PRINT THE RESULTS — report_results(), format_*(), angle_text()
+#    - Convert radians to degrees for readable angle output.
+#    - displayed is a string: 3.14159 becomes '3.14' at two decimal places.
+#    - Remove a minus sign if rounding produced text such as '-0.00'.
+#    - Printing never replaces the original numbers used by calculations.
+#    - --verbose adds aircraft/environment details and the calculation trace.
+#
+# ============================================================
+# B. DETAILED VARIABLE WORD BANK
+# ============================================================
+# Read entries as: variable name = meaning (units, where applicable).
+# Some short names are reused locally; their meanings depend on the function.
+# Dictionary keys such as flow['air_world'] use the same definitions below.
+#
+# +--------------------------------------------------------------------+
+# | B1. COORDINATES, UNITS AND PHYSICS TERMS
+# +--------------------------------------------------------------------+
+# NED / world       = Earth-fixed axes: north, east, down, in that order.
+# body              = Aircraft-fixed axes: forward, right, down.
+# wing              = Wing-fixed axes: forward along chord, right, down.
+# chord             = Line from the wing's leading edge to its trailing edge.
+# chord plane       = The forward/down (x/z) plane; excludes sideways flow.
+# AoA / alpha       = Angle of attack, calculated with atan2(down, forward).
+# incidence         = Fixed wing mounting angle relative to the aircraft body;
+#                     positive incidence raises the wing's leading edge.
+# freestream        = Airflow before local rotor wash or induced-flow effects.
+# rad / deg / °     = Radians / degrees; calculations use radians unless named
+#                     *_deg, *_degrees, winddirection, or wind_direction.
+# ft / ft2 / m2     = Feet / square feet / square metres.
+# CL / CD / Cm      = Lift / drag / pitching-moment coefficients. The XML does
+#                     not provide a supported model for these coefficients.
+# None              = Unknown or unavailable value; it does not mean zero.
+#
+# +--------------------------------------------------------------------+
+# | B2. FILE LOCATIONS AND CONSTANTS
+# +--------------------------------------------------------------------+
+# PROJECT_DIR       = Folder containing this Python file.
+# DATA_DIR          = Folder containing the aircraft XML data.
+# G                 = Standard gravitational acceleration (m/s²); unused so far.
+# FLOW_EPS_MPS      = Minimum chord-plane speed for a defined AoA (m/s).
+#                     This threshold does not turn small forces into zero.
+#
+# +--------------------------------------------------------------------+
+# | B3. XML LOADING
+# +--------------------------------------------------------------------+
+# filename          = Name of the XML file to read inside DATA_DIR.
+# file_path         = Full path to that XML file.
+# root              = Top-level XML element in the loaded document.
+# element           = XML element currently being inspected.
+# name              = Requested XML element's 'name' attribute.
+# tag_path          = Path through XML tags to the requested element.
+# attribute         = Optional XML attribute to read instead of element text.
+# value             = Value being loaded, formatted, or entered by the user.
+# loader            = Function used to load one aircraft parameter.
+# args              = Arguments passed to loader in try_load(); in main(),
+#                     the parsed command-line options instead.
+# error             = Caught XML, file-reading, or numeric conversion error.
+#
+# +--------------------------------------------------------------------+
+# | B4. AIRCRAFT DATA (attributes of aircraft / self)
+# +--------------------------------------------------------------------+
+# aircraft          = Aircraft object holding geometry and mass data from XML.
+# self              = The current Aircraft or Environment object in a method.
+# design_gross      = Aircraft design gross weight as supplied by XML (lb).
+# wing_span_ft      = Wingtip-to-wingtip distance (ft).
+# wing_area_ft2     = Wing reference area (ft²).
+# wing_area_m2      = The same wing reference area converted to m².
+# wing_chord_ft     = Wing chord length from XML (ft).
+# wing_aspect_ratio = Wing span squared divided by wing area (dimensionless).
+# wing_incidence_deg = Wing mounting angle loaded from XML (degrees).
+# fuselage_length_ft / fuselage_width_ft / fuselage_height_ft
+#                   = Aircraft fuselage dimensions (ft); width/height unknown.
+# rotor_diameter_ft = Diameter of one rotor disk (ft).
+# rotor_blades_per_hub = Number of blades attached to each rotor hub.
+# rotor_hub_positions = Rotor hub locations; currently unknown, with no frame
+#                       or units established in this prototype.
+#
+# +--------------------------------------------------------------------+
+# | B5. ENVIRONMENT AND PRESCRIBED AIRCRAFT STATE
+# +--------------------------------------------------------------------+
+# environment       = Environment object holding the conditions below.
+# windspeed         = Horizontal wind speed (m/s), never negative.
+# winddirection     = Direction wind comes FROM, clockwise from north (degrees).
+# wind_direction    = User-entered value used to set winddirection.
+# air_density / density = Air density (kg/m³); density is the user input.
+# temperature       = Air temperature (°C).
+# altitude          = Altitude entered by the user (m).
+# state             = AircraftState object: prescribed velocity and attitude.
+# ground_velocity_ned = Aircraft velocity over the ground: north/east/down (m/s).
+# roll / pitch / yaw = Aircraft orientation angles (radians): positive means
+#                      right wing down / nose up / turning north toward east.
+# velocity          = User-entered ground velocity tuple (m/s).
+# angles            = Roll/pitch/yaw tuple; radians in ask_initial_state(),
+#                     degrees for display in report_aoa().
+# axis              = Name of the velocity or attitude component being entered.
+# used_default      = Whether the user chose the stationary, level, north state.
+#
+# +--------------------------------------------------------------------+
+# | B6. ROTATIONS AND AIRFLOW CALCULATIONS
+# +--------------------------------------------------------------------+
+# cr / sr           = Cosine / sine of roll (dimensionless).
+# cp / sp           = Cosine / sine of pitch (dimensionless).
+# cy / sy           = Cosine / sine of yaw (dimensionless).
+# matrix / rotation = Rotation matrix; rotation changes NED to body coordinates.
+# row               = One row of a matrix.
+# vector            = Three-component quantity being rotated or displayed.
+# a / b             = Matching matrix-row/vector components in transform().
+# speed             = Wind speed in wind_velocity_ned(); aircraft airspeed
+#                     magnitude in a flow dictionary (both m/s).
+# from_degrees      = Wind FROM direction passed to wind_velocity_ned() (degrees).
+# direction         = The same wind direction converted to radians.
+# values            = State/wind numbers collected for finite-value validation.
+# v                 = A local number during validation/formatting; also the
+#                     wing's sideways velocity when unpacking (u, v, w).
+# wind              = Wind velocity toward its destination, in NED axes (m/s).
+# g / w             = Ground/wind components in the air_world subtraction.
+#                     Elsewhere w means the wing's down-axis airspeed component.
+# air_world         = Aircraft velocity relative to air, in NED axes (m/s):
+#                     ground_velocity_ned minus wind. Example: northward ground
+#                     speed 10 minus northward wind 3 gives airspeed north 7.
+# body              = That same air-relative velocity in body axes (m/s).
+# body_alpha        = AoA relative to the BODY forward axis (radians); this
+#                     does not yet account for wing mounting incidence.
+# incidence_deg     = Wing mounting angle passed into calculate_aoa() (degrees).
+# i                 = That wing incidence converted to radians.
+# wing_rotation     = Matrix changing body coordinates to wing coordinates.
+# wing              = Air-relative velocity in wing axes (m/s), or None when
+#                     wing incidence is missing.
+# u / v / w         = Wing forward / right / down velocity components (m/s).
+# alpha             = WING AoA including incidence (radians), or None when
+#                     incidence is missing or chord-plane airflow is too small.
+# chord_speed       = Magnitude of wing forward/down velocity (m/s).
+# _                 = An unpacked component that this calculation does not use.
+# result / flow     = Dictionary of airflow vectors, rotations, speed, AoA,
+#                     and a status explaining whether wing AoA is available.
+#                     These velocities describe aircraft motion relative to air;
+#                     incoming airflow points in the opposite direction.
+#
+# +--------------------------------------------------------------------+
+# | B7. AERODYNAMIC RESULTS
+# +--------------------------------------------------------------------+
+# aero              = Dictionary containing aerodynamic status and force.
+# status            = Text explaining availability of AoA or aerodynamic force.
+# force_body_n      = Wing freestream force tuple in body axes (N); None when
+#                     unavailable. Exactly zero freestream gives a zero tuple.
+# regime            = Extra status text for unsupported flow directions.
+# airspeed          = Aircraft speed relative to air in calculate_lift() (m/s).
+# lift_coefficient  = Supplied CL value (dimensionless); no verified model yet.
+# lift              = Display text for wing lift; not a calculated force value.
+#
+# +--------------------------------------------------------------------+
+# | B8. DISPLAY, INPUT AND PROGRAM OPTIONS
+# +--------------------------------------------------------------------+
+# displayed         = Rounded TEXT made from a number, e.g. '3.14'; used only
+#                     for output. The original number keeps its full precision.
+# places            = Number of decimal places to show.
+# unit              = Unit text appended to a displayed number/vector.
+# reason            = Explanation shown when a value is unavailable.
+# label             = Heading/name printed beside a value or matrix.
+# prompt            = Question shown when requesting user input.
+# default           = Value used when the user presses Enter without typing.
+# minimum           = Lowest accepted numeric input, when a limit is supplied.
+# answer            = User's typed response, with surrounding spaces removed.
+# suffix            = Prompt text showing a default or an unknown-value option.
+# parser            = Command-line argument parser.
+# argv              = Command-line arguments supplied to main(); None uses the
+#                     arguments with which the program was launched.
+# verbose           = Option enabled by -v or --verbose (args.verbose).
+# flight_mode       = User's scenario label: helicopter/transition/airplane.
+# command           = User's pilot-command label; it does not drive a simulation.
+# initial           = Display description of the chosen prescribed state.
+# ============================================================
+
+# +--------------------------------------------------------------------+
+# | C. MISSING DATA AND CURRENT ISSUES                                  |
+# +--------------------------------------------------------------------+
+#
+# C1. MISSING AIRCRAFT FIELDS — explicitly left as None in Aircraft
+#    - rotor_hub_positions: hub locations are not supplied/confirmed.
+#    - fuselage_width_ft: fuselage width is not supplied/confirmed.
+#    - fuselage_height_ft: fuselage height is not supplied/confirmed.
+#    - Any XML loading failure can also leave a loaded field as None.
+#    - Missing wing incidence prevents wing-frame velocity and wing AoA.
+#
+# C2. DATA NEEDED FOR SUPPORTED NONZERO WING LIFT
+#    - Numerical CL data or a verified coefficient model is missing from
+#      the current calculation path. Approximate XML descriptors do not
+#      establish a complete supported curve.
+#    - Source AoA convention, reference area, velocity definition and
+#      component scope must be checked before applying coefficient data.
+#    - Actual nacelle/flap/flaperon settings and supported operating ranges
+#      need definitions; mode labels do not supply these numeric settings.
+#    - CD and Cm models are also missing for drag and pitching moment.
+#      They are separate requirements from a supported scalar lift model.
+#
+# C3. IMPLEMENTATION STILL NEEDED
+#    - Load aerodynamic data and evaluate coefficients within valid bounds.
+#    - Supply density, area, configuration and coefficient data to the force
+#      calculation; wing_aerodynamics() currently receives only flow.
+#    - Connect calculate_lift() to the live calculation/reporting path.
+#    - Define force directions before reporting nonzero body-axis forces.
+#    - Validate coefficient results against supported source reference cases;
+#      the current tests check kinematics and existing prototype behavior.
+#
+# C4. CURRENT MODEL LIMITS
+#    - Wind is horizontal; vertical wind is assumed zero.
+#    - Wing flow uses one reference wing with incidence only: no sweep,
+#      dihedral, panel variation, rotor wash, induced or angular-rate flow.
+#    - Rotor-blade AoA, rotor thrust, time integration, command response and
+#      flight-by-wire control laws are not implemented.
+#    - Temperature and altitude are recorded but do not derive air density.
+#    - Aircraft geometry is loaded selectively; loaded data does not imply
+#      that a corresponding force or dynamics model exists.
+#
+# C5. RESULTS THAT CAN LOOK SURPRISING
+#    - Default stationary state + wind FROM south produces reverse flow:
+#      with the current 3° incidence, wing AoA is approximately -177°.
+#      That angle is a kinematic result, not a supported lift prediction.
+#    - Undefined AoA, missing coefficients and exactly zero freestream force
+#      are different outcomes; None must not be replaced with zero.
+#    - A tiny nonzero speed can print as 0.00 m/s and still have unavailable
+#      force. Display rounding is not a physical zero-speed test.
+#    - Zero freestream force excludes rotor wash; it is not a statement
+#      that a hovering tiltrotor has no aerodynamic loads.
+#
+# Further detail: TMPE_AERODYNAMIC_DATA_GAPS_REPORT.md at the project root.
+# +--------------------------------------------------------------------+
+# | END OF REFERENCE GUIDE                                             |
+# +--------------------------------------------------------------------+
