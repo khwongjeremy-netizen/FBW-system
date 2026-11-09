@@ -46,4 +46,35 @@
   <!-- Missing: complete CL(alpha), CD(alpha), Cm(alpha) lookup tables,
       including post-stall behaviour and control-deflection effects.
       Do not invent interpolation points. -->
+<supplemental_analytic_models status="user_supplied_unverified" provenance="User-pasted source summary supplied 2026-11-09; primary-source fact checking deferred." role="educational_model_inputs" implementation_status="not_loaded_by_TMPE" note="Analytic estimates do not replace missing source lookup arrays. No supported alpha bounds were supplied.">
+  <wing_lift_estimate source="S11" location="ch. VI, sec. 2.1, pp. 288-290, Eqs. 6.1 and 6.15">
+    <thin_airfoil_slope unit="per_rad">2*pi</thin_airfoil_slope>
+    <section_lift_slope unit="per_rad" minimum="5.8" maximum="6.0" nominal="5.9" status="assumed_for_estimate" />
+    <finite_span_slope_equation>a = a0 / (1 + a0 / (pi * AR_effective))</finite_span_slope_equation>
+    <effective_aspect_ratio status="geometric_AR_used_in_supplied_estimate">6.12</effective_aspect_ratio>
+    <estimated_lift_slope unit="per_rad" method="calculated_from_supplied_nominal_inputs" note="Separate estimate; existing 0.085/deg descriptor retained.">4.51461266664987</estimated_lift_slope>
+    <local_angle_equation note="Angle convention must be resolved before use; do not add incidence again to an angle already in the wing frame, or double count induced downwash with a finite-wing slope.">alpha_w(y) = alpha_fuselage + incidence - downwash(y) + wake_delta_alpha(y)</local_angle_equation>
+  </wing_lift_estimate>
+  <airframe_drag_estimate source="S12" location="sec. 4.1.3, Eq. 4.11, pp. 79-81" component_scope="total_airframe" configuration="clean_airplane_mode" note="Not isolated wing/pylon drag.">
+    <equation>CD = CD0 + CL^2 / (pi * AR * e) + delta_CD_comp</equation>
+    <parasite_drag_equation>CD0 = equivalent_flat_plate_area / wing_reference_area</parasite_drag_equation>
+    <equivalent_flat_plate_area unit="ft^2" minimum="7.0" maximum="8.5" />
+    <reference_area unit="ft^2">169.0</reference_area>
+    <parasite_drag_coefficient minimum="0.041" maximum="0.050" precision="rounded_supplied_range" />
+    <oswald_efficiency minimum="0.85" maximum="0.95" selection_status="no_nominal_selected" note="Summary gives an ambiguous greater-than/range claim; these are candidate estimates, not established bounds." />
+  </airframe_drag_estimate>
+  <compressibility source="S11 S12" location="CR-3082 ch. VI sec. 5.4, pp. 314-322, Eq. 6.51; CR-1997-206241 p. 80">
+    <subcritical_slope_equation domain="subcritical subsonic flow; not a transonic model">a_comp = a_incompressible / sqrt(1 - Mach^2)</subcritical_slope_equation>
+    <drag_divergence_equation>M_DD = M_DD0 - k1 * CL</drag_divergence_equation>
+    <drag_rise_equation>delta_CD_comp = k2 * (Mach - M_DD)^3 if Mach &gt; M_DD else 0</drag_rise_equation>
+    <parameter name="M_DD0" status="not_supplied" />
+    <parameter name="k1" status="not_supplied" />
+    <parameter name="k2" status="not_supplied" />
+  </compressibility>
+  <section_pitching_moment_estimate source="S11" location="sec. 2.1, Eq. 6.16a, p. 290" component_scope="airfoil_section" note="Not a replacement for existing wing/pylon moment model.">
+    <leading_edge_equation>Cm_LE = Cm0 - 0.25 * CL</leading_edge_equation>
+    <aerodynamic_center_chord_fraction minimum="0.25" maximum="0.26" />
+    <aerodynamic_center_moment_coefficient minimum="-0.050" maximum="-0.040" condition="before_stall" />
+  </section_pitching_moment_estimate>
+</supplemental_analytic_models>
 </aerodynamics></xv15_dataset>

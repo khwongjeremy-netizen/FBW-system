@@ -68,5 +68,16 @@
       - The rotor-disc area is reported per rotor.
       - RPM and tip-speed values are tied to the stated design modes; do not assume one RPM applies throughout conversion.
     </comment>
+<supplemental_rotor_geometry status="user_supplied_unverified" provenance="User-pasted source summary supplied 2026-11-09; primary-source fact checking deferred." source="S2" location="sec. 3.7, pp. 17-18; sec. 3.8, p. 19">
+  <rotor_count>2</rotor_count>
+  <rotation_arrangement>counter_rotating</rotation_arrangement>
+  <rotor_radius unit="ft">12.5</rotor_radius>
+  <total_disk_area unit="ft^2" precision="rounded_supplied_value">982</total_disk_area>
+  <blade_twist_endpoints unit="deg" note="Angle datum not supplied; endpoint difference conflicts with existing -45 deg twist descriptor. Intermediate distribution unavailable.">
+    <node r_over_R="0.1">7</node>
+    <node r_over_R="1.0">-40</node>
+    <tip_minus_root unit="deg">-47</tip_minus_root>
+  </blade_twist_endpoints>
+</supplemental_rotor_geometry>
   </proprotor_and_drive_system>
 </xv15_dataset>

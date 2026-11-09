@@ -74,5 +74,14 @@
         flight-control-system mapping from pilot commands to
         actuator positions. Mechanical limits alone do not provide
         that mapping. -->
+<supplied_configuration_schedule status="user_supplied_unverified" provenance="User-pasted source summary supplied 2026-11-09; primary-source fact checking deferred." source="S2" location="sec. 3.4, Fig. 3.4.1 p. 15; sec. 4.1 and 5.4, pp. 22, 26-28" implementation_status="not_loaded_by_TMPE">
+  <configuration mode="hover_conversion" flap_deg="40" flaperon_droop_deg="25" nacelle_hover_deg="90" />
+  <configuration mode="airplane" flap_deg="0" flaperon_droop_deg="0" nacelle_deg="0" />
+  <differential_flaperon_travel unit="deg" sign="plus_or_minus" note="Supplied generic claim conflicts with existing asymmetric 23.8 up / 13.8 down values; configuration dependence unresolved.">20</differential_flaperon_travel>
+  <flap_retraction start_speed="100" end_speed="120" unit="KEAS" note="Supplied 100-120 range does not specify an exact interpolation schedule; no automatic schedule inferred." />
+  <extended_flap_speed_limit unit="KEAS" symbol="V_C">170</extended_flap_speed_limit>
+  <extended_flap_speed_limit unit="KEAS" symbol="V_D">189</extended_flap_speed_limit>
+  <conversion_corridor>Minimum speed depends on wing stall and flap setting; maximum on rotor flapping and wing-beam fatigue limits. Numerical corridor coordinates not supplied.</conversion_corridor>
+</supplied_configuration_schedule>
   </control_surfaces>
 </xv15_dataset>

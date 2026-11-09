@@ -27,6 +27,11 @@
       <quarter_chord_sweep unit="deg" convention="negative indicates forward sweep">-6.5</quarter_chord_sweep>
       
       <airfoil>NACA 64A223 (Mod)</airfoil>
+<supplemental_geometry status="user_supplied_unverified" provenance="User-pasted source summary supplied 2026-11-09; primary-source fact checking deferred." source="S2" location="sec. 3.3, p. 12; conversion-axis context pp. 12, 19">
+  <thickness_chord_ratio span_distribution="constant" airfoil_claim="NACA 64A223" note="Existing modified-airfoil designation retained.">0.23</thickness_chord_ratio>
+  <conversion_axis_chord_fraction reference="wing leading edge">0.39</conversion_axis_chord_fraction>
+  <conversion_hinge_axis_sweep unit="deg" convention="negative forward sweep">-5.5</conversion_hinge_axis_sweep>
+</supplemental_geometry>
     </wing>
     
     
