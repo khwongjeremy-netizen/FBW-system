@@ -1,6 +1,6 @@
 # TMPE — Tiltrotor Modeling Physics Engine
 
-An independent Python project for learning how tiltrotor physics and pilot-assistance software systems work, using the NASA/Bell XV-15 as a reference aircraft.
+An independent Python project for learning how aerodynamic physics and pilot-assistance software systems work on a tiltrotor, using the NASA/Bell XV-15 as a reference aircraft.
 
 ## Overview
 
