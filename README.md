@@ -1,16 +1,20 @@
 # TMPE — Tiltrotor Modeling Physics Engine
 
-An independent Python project for learning how tiltrotor physics and pilot-assistance software systems work, using the NASA/Bell XV-15 as a reference aircraft.
-
 ## Overview
 
-TMPE is a hands-on project for building my understanding of the physical laws that shape tiltrotor flight and the software systems that can assist pilots. I use the XV-15 and its technical data as a basis for exploring those topics through code. The longer-term direction is to model aircraft forces and motion, then investigate simplified pilot-assistance and flight-by-wire (FBW) concepts. These systems are development goals; the current program does not implement them.
-
-> **Current state:** Early prototype; it calculates freestream angle of attack from aircraft motion and orientation that you enter: ground velocity north/east/up or down, and roll, pitch and heading. For example, you can specify an aircraft stationary and level, facing north (the default), or moving north at 30 m/s with its nose pitched up 5°. These are starting conditions supplied by you; the program does not calculate how they change over time.
->
-> You also enter altitude (for example, 500 m), wind conditions and a flight-mode label (`helicopter`, `transition` or `airplane`). Altitude is recorded but does not affect the current AoA calculation; the mode is a label only and does not set rotor tilt or aircraft behavior. Horizontal position (such as latitude/longitude) is not entered or tracked. The prototype does not simulate aircraft responses or calculate nonzero aerodynamic forces.
-
-Much of the code and XML data is AI-generated and not systematically human-reviewed or fact-checked; many errors may remain.
+- **What this is:** TMPE is an independent Python learning project that uses the NASA/Bell XV-15 as a reference for modeling tiltrotor flight.
+- **Why I made it:** To learn the physics behind aircraft forces and motion through code, then explore pilot-assistance and flight-by-wire (FBW) concepts.
+- **XV-15 data:** I am organizing aircraft specifications and research notes in XML files, including mass, geometry, rotor and aerodynamic data, with units and source notes where available. The program currently loads selected parameters from `mass.xml`, `geometry.xml` and `rotor.xml`; much of the dataset still needs verification against the original reports.
+- **Aircraft inputs:** Ground velocity in north/east/down directions (m/s), plus roll, pitch and heading (degrees). For example: stationary, level and facing north, or moving north at 30 m/s with the nose pitched up 5°. These describe a supplied snapshot of the aircraft's motion and orientation.
+- **Environment and scenario inputs:** Wind speed (m/s), wind direction (degrees FROM north), air density (kg/m³), temperature (°C), altitude (m), a flight-mode label (`helicopter`, `transition`, `airplane`) and a pilot-command label (such as `hover` or `climb`). Altitude and temperature are recorded but do not determine air density; mode and command labels do not yet change aircraft behavior.
+- **Current calculation:** Subtract wind velocity from ground velocity (`V_air = V_ground − V_wind`), then use aircraft orientation and the XML wing mounting angle to express airflow in wing coordinates. Calculate freestream wing angle of attack with `α = atan2(w_w, u_w)`, where `u_w` and `w_w` are the wing-frame forward and downward air-relative velocity components.
+- **Current outputs:** Airspeed (m/s), wing angle of attack (degrees, or undefined when there is insufficient airflow in the wing's forward/down plane), flow condition and wing-lift availability. `--verbose` also shows inputs, aircraft parameters and calculation steps.
+- **Intended wing-lift equation:** `L = ½ρV²SCL`, using air density `ρ`, airspeed `V`, wing area `S` and lift coefficient `CL` to calculate lift `L` in newtons. A helper implements this equation, but the interactive program still lacks a verified lift-coefficient model and reports nonzero-speed wing lift as unavailable. At exactly zero freestream speed, it reports zero freestream wing lift; rotor thrust is not modeled.
+- **Current stage:** Early prototype for airflow calculations and data handling. It does not yet simulate liftoff, aircraft responses, changing position or flight trajectories.
+- **Immediate goal:** Build toward simulated liftoff by adding rotor thrust, the force balance against gravity and vertical motion over time.
+- **Next milestone:** After liftoff works, add horizontal travel and navigation over one fixed target distance. Repeat that same distance while testing and refining the behavior before expanding to other distances or routes.
+- **Longer-term plans:** Develop fuller flight dynamics and investigate simplified pilot-assistance and FBW controls.
+- **Data and code quality:** Much of the code and XML data is AI-generated and has not been systematically human-reviewed or fact-checked; many errors may remain.
 
 ## Current features
 
@@ -143,7 +147,9 @@ All items are planned, not implemented:
 1. **Foundation:** Refine XML loading and reporting, aircraft/environment structures, unit consistency, and basic aerodynamic calculations.
 2. **Physical modeling:** Research rotor thrust and fuller aerodynamic forces; extend the documented coordinate frames and document missing parameters.
 3. **Flight dynamics:** Add force/moment equations and translational/rotational motion; compare with appropriate published XV-15 data.
-4. **Control exploration:** Separate pilot commands from aircraft dynamics and investigate control logic responding to aircraft state and pilot intent.
+4. **Liftoff milestone:** Combine rotor thrust, gravity and vertical dynamics to simulate getting the aircraft off the ground.
+5. **Horizontal-travel milestone:** Add horizontal travel and navigation over a fixed target distance; repeat the same distance while testing and refining the behavior.
+6. **Control exploration:** Separate pilot commands from aircraft dynamics and investigate control logic responding to aircraft state and pilot intent.
 
 ## Sources
 
