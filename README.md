@@ -4,10 +4,13 @@ An independent Python project for learning how aerodynamic physics and pilot-ass
 
 ## Overview
 
-TMPE is a hands-on project for building my understanding of the physical laws that shape tiltrotor flight and the software systems that can assist pilots. I use the XV-15 and its technical data as a basis for exploring those topics through code. The longer-term direction is to model aircraft forces and motion, then investigate simplified pilot-assistance and flight-by-wire (FBW) concepts. These systems are development goals; the current program does not implement them.
+TMPE is a hands-on project using NASA/BELL's XV-15 data to explore aerodyanmics physics and software pilot assistance applied to a tiltrotor. Future goals include modeling aircraft motion and adding basic pilot-assistance and flight-by-wire systems.
 
-> **Current state:** Early prototype; it's supposed to calculate the freestream angle of attack from prescribed initial state, but does not simulate aircraft responses or calculate nonzero aerodynamic forces.
-Much of the code and XML data is AI-generated and not systematically human-reviewed or fact-checked; many errors may remain.
+> **Current state:** 
+- Early prototype
+- To calculate the freestream angle of attack from prescribed initial state, but does not simulate aircraft responses or calculate nonzero aerodynamic forces.
+- While the XV-15 xml data files have been fact checked a couple of times
+- AI Gen Code is not systematically human-reviewed or fact-checked; many errors may remain.
 
 ## Current features
 
