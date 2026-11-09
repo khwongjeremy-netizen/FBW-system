@@ -6,8 +6,11 @@ An independent Python project for learning how tiltrotor physics and pilot-assis
 
 TMPE is a hands-on project for building my understanding of the physical laws that shape tiltrotor flight and the software systems that can assist pilots. I use the XV-15 and its technical data as a basis for exploring those topics through code. The longer-term direction is to model aircraft forces and motion, then investigate simplified pilot-assistance and flight-by-wire (FBW) concepts. These systems are development goals; the current program does not implement them.
 
-> **Current state:** Early prototype; it calculates freestream angle of attack from prescribed initial state, but does not simulate aircraft responses or calculate nonzero aerodynamic forces.
-Much of the code and XML data is AI-generated and not systematically human-reviewed or fact-checked; errors may remain.
+> **Current state:** Early prototype; it calculates freestream angle of attack from aircraft motion and orientation that you enter: ground velocity north/east/up or down, and roll, pitch and heading. For example, you can specify an aircraft stationary and level, facing north (the default), or moving north at 30 m/s with its nose pitched up 5°. These are starting conditions supplied by you; the program does not calculate how they change over time.
+>
+> You also enter altitude (for example, 500 m), wind conditions and a flight-mode label (`helicopter`, `transition` or `airplane`). Altitude is recorded but does not affect the current AoA calculation; the mode is a label only and does not set rotor tilt or aircraft behavior. Horizontal position (such as latitude/longitude) is not entered or tracked. The prototype does not simulate aircraft responses or calculate nonzero aerodynamic forces.
+
+Much of the code and XML data is AI-generated and not systematically human-reviewed or fact-checked; many errors may remain.
 
 ## Current features
 
