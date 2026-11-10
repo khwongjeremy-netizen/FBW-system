@@ -1,9 +1,10 @@
 # ============================================================
 # TMPE — Tiltrotor Modeling Physics Engine
-# Interactive input and XML loading prototype.
+# Ground-start helicopter takeoff prototype for the XV-15.
 #
 # This is an educational prototype, NOT a validated flight simulator.
-# It does not yet calculate lift, rotor thrust, aircraft motion, or FBW laws.
+# Scope: rotor lift generation and vertical takeoff from the ground.
+# Rotor thrust and vertical motion are not implemented yet.
 # ============================================================
 
 # ============================================================
@@ -31,12 +32,9 @@ from dataclasses import dataclass
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_DIR / "data(v.2)"
-G = 9.80665  # m/s²
+G = 9.80665
 
 
-# ============================================================
-# 1. XML DATA LOADING
-# ============================================================
 
 def fetchvalue(filename, name):
     """Load a numeric XML element identified by its name attribute."""
@@ -81,9 +79,6 @@ def try_load(loader, *args):
         return None
 
 
-# ============================================================
-# 2. AIRCRAFT PARAMETERS
-# ============================================================
 
 class Aircraft:
     """Selected XV-15 parameters loaded from XML."""
@@ -118,7 +113,6 @@ class Aircraft:
             "proprotor_and_drive_system/rotor_blades_per_hub"
         )
 
-        # Not supplied/confirmed in the current data framework:
         self.rotor_hub_positions = None
         self.fuselage_width_ft = None
         self.fuselage_height_ft = None
@@ -131,9 +125,6 @@ class Aircraft:
         return self.wing_area_ft2 * 0.09290304
 
 
-# ============================================================
-# 3. ENVIRONMENT AND USER INPUT
-# ============================================================
 
 class Environment:
     def __init__(
@@ -144,26 +135,25 @@ class Environment:
         temperature=15.0,
         altitude=0.0,
     ):
-        self.windspeed = windspeed          # m/s
-        self.winddirection = winddirection  # degrees FROM, clockwise from north
-        self.air_density = air_density      # kg/m³
-        self.temperature = temperature      # °C
-        self.altitude = altitude            # m
+        self.windspeed = windspeed
+        self.winddirection = winddirection
+        self.air_density = air_density
+        self.temperature = temperature
+        self.altitude = altitude
 
 
-# World: North/East/Down (NED), m/s. Body: forward/right/down.
-# Right-handed intrinsic yaw-pitch-roll (3-2-1); positive yaw turns north
-# toward east, pitch raises the nose, roll lowers the right wing. Radians.
-# This is prescribed initial state, not the response to a pilot command.
-FLOW_EPS_MPS = 1e-6  # Below this chord-plane speed AoA is unavailable.
+FLOW_EPS_MPS = 1e-6
 
 
 @dataclass(frozen=True)
 class AircraftState:
+    """Velocity and attitude, defaulting to a stationary ground start."""
+
     ground_velocity_ned: tuple = (0.0, 0.0, 0.0)
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
+    height_agl_m: float = 0.0
 
 
 def world_to_body_matrix(state):
@@ -297,8 +287,6 @@ def report_results(flow, aero):
     print(f"{'Airspeed:':<19}{format_quantity(flow['speed'], 'm/s')}")
     reason = "wing incidence missing" if flow['wing'] is None else "insufficient chord-plane airflow"
     print(f"{'Wing AoA:':<19}{angle_text(flow['alpha'], reason)}")
-    # Zero freestream force is already established by the aerodynamic model.
-    # Never infer zero lift from a speed that merely rounds to 0.00.
     lift = "0.00 N" if aero['force_body_n'] == (0.0, 0.0, 0.0) else "Unavailable — aerodynamic model missing"
     print(f"{'Wing lift:':<19}{lift}")
     print(f"{'Flow condition:':<19}{flow_condition(flow)}")
@@ -339,8 +327,6 @@ def report_aoa(state, aircraft, flow):
         u, _, w = flow['wing']
         print(f"Wing chordwise u: {format_quantity(u, 'm/s')}; normal w: {format_quantity(w, 'm/s')}")
         if format_number(u) == format_number(w) == '0.00':
-            # Display-only positive scaling keeps tiny, valid atan2 inputs
-            # readable without changing velocity units or computed AoA.
             chord_speed = math.hypot(u, w)
             print("For readable atan2 inputs, normalize by chord-plane speed (dimensionless):")
             print(f"  u/|V_xz| = {format_number(u / chord_speed, 6)}, w/|V_xz| = {format_number(w / chord_speed, 6)}")
@@ -358,7 +344,7 @@ def report_details(environment, aircraft, aero):
         ("Wind speed", format_quantity(environment.windspeed, 'm/s')),
         ("Wind FROM direction", format_quantity(environment.winddirection, '°', 1)),
         ("Temperature", format_quantity(environment.temperature, '°C', 1)),
-        ("Altitude", format_quantity(environment.altitude, 'm')),
+        ("Ground elevation (MSL)", format_quantity(environment.altitude, 'm')),
         ("Design gross", format_quantity(aircraft.design_gross, 'lb')),
         ("Wing span", format_quantity(aircraft.wing_span_ft, 'ft')),
         ("Wing area", format_quantity(aircraft.wing_area_ft2, 'ft²')),
@@ -369,11 +355,6 @@ def report_details(environment, aircraft, aero):
                                                      reason='aerodynamic model missing')),
     ):
         print(f"{label}: {value}")
-
-
-def ask_text(prompt, default):
-    answer = input(f"{prompt} [{default}]: ").strip()
-    return answer if answer else default
 
 
 def ask_float(prompt, default=None, minimum=None, places=2):
@@ -401,23 +382,6 @@ def ask_float(prompt, default=None, minimum=None, places=2):
         return value
 
 
-def ask_initial_state():
-    while True:
-        answer = input("Use default initial state: stationary, level, facing north? [Y/n] ").strip().lower()
-        if answer in ('', 'y', 'yes'):
-            return AircraftState(), True
-        if answer in ('n', 'no'):
-            break
-        print("Please enter y or n.")
-
-    velocity = tuple(ask_float(f"Initial ground velocity {axis} (m/s)", default=0.0)
-                     for axis in ("north", "east", "down (negative = climb)"))
-    angles = tuple(math.radians(ask_float(f"Initial {axis} (degrees)", default=0.0, places=1))
-                   for axis in ("roll (right wing down positive)", "pitch (nose up positive)",
-                                "yaw (clockwise from north)"))
-    return AircraftState(velocity, *angles), False
-
-
 def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
     """Calculate wing lift when supplied with model-derived inputs.
 
@@ -434,33 +398,24 @@ def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
     return 0.5 * air_density * airspeed**2 * wing_area_m2 * lift_coefficient
 
 
-# ============================================================
-# 4. MAIN PROGRAM — CONNECT THE COMPONENTS
-# ============================================================
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="TMPE — Tiltrotor Modeling Physics Engine")
+    parser = argparse.ArgumentParser(
+        description="TMPE — XV-15 helicopter-mode lift and vertical takeoff from the ground."
+    )
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="show aircraft data and the complete AoA calculation trace")
     args = parser.parse_args(argv)
     print("\nTMPE — Tiltrotor Modeling Physics Engine")
 
-    # 1. Load aircraft parameters from XML.
     aircraft = Aircraft()
 
-    # 2. Collect mode and command labels. These do not drive a flight model.
-    flight_mode = ask_text(
-        "Flight mode (helicopter / transition / airplane)",
-        "helicopter"
-    ).lower()
+    state = AircraftState()
+    print("Scenario: XV-15 helicopter-mode vertical takeoff.")
+    print("Initial state: on the ground, stationary, level, facing north.")
+    print("Scope: generate rotor lift and rise vertically from the ground.")
 
-    command = ask_text(
-        "Pilot command (label only; e.g. hover / takeoff / climb / move_forward / land)",
-        "hover"
-    ).lower()
-
-    # 3. Collect environmental conditions.
-    print("\nEnter environmental conditions.")
+    print("\nEnter ground-level environmental conditions.")
 
     density = ask_float(
         "Air density (kg/m^3)",
@@ -487,7 +442,7 @@ def main(argv=None):
     )
 
     altitude = ask_float(
-        "Altitude (m)",
+        "Ground elevation above sea level (m)",
         default=0.0
     )
 
@@ -499,15 +454,13 @@ def main(argv=None):
         altitude=altitude
     )
 
-    state, used_default = ask_initial_state()
     flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
     aero = wing_aerodynamics(flow)
 
     report_results(flow, aero)
-    print(f"\nScenario labels: {flight_mode} / {command} (no simulated command response).")
-    initial = "stationary, level, facing north" if used_default else "custom velocity and attitude"
-    print(f"State: {initial} (prescribed). Wind is horizontal; freestream wing model only.")
-    print("Local rotor wash, induced and rotational flow excluded; rotor thrust, dynamics and FBW unimplemented.")
+    print("\nTakeoff status: not simulated — rotor thrust and vertical motion model missing.")
+    print(f"Aircraft remains at its initial ground state; height above ground = {format_number(state.height_agl_m)} m.")
+    print("Wing results describe freestream airflow only; they do not determine rotor lift or liftoff.")
     print("Educational prototype; not a validated flight simulator.")
     if args.verbose:
         report_details(environment, aircraft, aero)
@@ -532,10 +485,12 @@ if __name__ == "__main__":
 #    - Convert wing area from ft² to m² when wing_area_m2 is requested.
 #    - Keep failed loads as None and print a data warning.
 #
-# 2. COLLECT THE SCENARIO — main(), Environment, ask_initial_state()
-#    - Ask for environmental conditions and prescribed velocity/attitude.
-#    - Flight mode and pilot command are labels only.
-#    - The state is a snapshot supplied by the user; motion is not simulated.
+# 2. SET UP GROUND TAKEOFF — main(), Environment, AircraftState
+#    - Ask only for ground-level environmental conditions.
+#    - Always start in helicopter mode, on the ground and at rest.
+#    - Attitude is fixed initially: level and facing north.
+#    - Ground elevation is not aircraft height above ground.
+#    - Motion and takeoff are not yet simulated.
 #
 # 3. SUBTRACT WIND — wind_velocity_ned(), calculate_aoa()
 #    - Convert the wind's FROM direction into a velocity toward its destination.
@@ -653,16 +608,13 @@ if __name__ == "__main__":
 # wind_direction    = User-entered value used to set winddirection.
 # air_density / density = Air density (kg/m³); density is the user input.
 # temperature       = Air temperature (°C).
-# altitude          = Altitude entered by the user (m).
+# altitude          = Ground elevation above sea level (m), not height AGL.
 # state             = AircraftState object: prescribed velocity and attitude.
 # ground_velocity_ned = Aircraft velocity over the ground: north/east/down (m/s).
+# height_agl_m      = Height above local ground (m); initially zero.
 # roll / pitch / yaw = Aircraft orientation angles (radians): positive means
 #                      right wing down / nose up / turning north toward east.
-# velocity          = User-entered ground velocity tuple (m/s).
-# angles            = Roll/pitch/yaw tuple; radians in ask_initial_state(),
-#                     degrees for display in report_aoa().
-# axis              = Name of the velocity or attitude component being entered.
-# used_default      = Whether the user chose the stationary, level, north state.
+# angles            = Roll/pitch/yaw tuple in degrees for report_aoa().
 #
 # +--------------------------------------------------------------------+
 # | B6. ROTATIONS AND AIRFLOW CALCULATIONS
@@ -735,9 +687,6 @@ if __name__ == "__main__":
 # argv              = Command-line arguments supplied to main(); None uses the
 #                     arguments with which the program was launched.
 # verbose           = Option enabled by -v or --verbose (args.verbose).
-# flight_mode       = User's scenario label: helicopter/transition/airplane.
-# command           = User's pilot-command label; it does not drive a simulation.
-# initial           = Display description of the chosen prescribed state.
 # ============================================================
 
 # +--------------------------------------------------------------------+
@@ -757,8 +706,8 @@ if __name__ == "__main__":
 #      establish a complete supported curve.
 #    - Source AoA convention, reference area, velocity definition and
 #      component scope must be checked before applying coefficient data.
-#    - Actual nacelle/flap/flaperon settings and supported operating ranges
-#      need definitions; mode labels do not supply these numeric settings.
+#    - Helicopter-mode nacelle/flap/flaperon settings and supported operating
+#      ranges need numeric definitions before forces can be modeled.
 #    - CD and Cm models are also missing for drag and pitching moment.
 #      They are separate requirements from a supported scalar lift model.
 #
@@ -775,8 +724,8 @@ if __name__ == "__main__":
 #    - Wind is horizontal; vertical wind is assumed zero.
 #    - Wing flow uses one reference wing with incidence only: no sweep,
 #      dihedral, panel variation, rotor wash, induced or angular-rate flow.
-#    - Rotor-blade AoA, rotor thrust, time integration, command response and
-#      flight-by-wire control laws are not implemented.
+#    - Rotor thrust and vertical time integration are still needed for takeoff;
+#      flight-by-wire control laws are outside the current takeoff scope.
 #    - Temperature and altitude are recorded but do not derive air density.
 #    - Aircraft geometry is loaded selectively; loaded data does not imply
 #      that a corresponding force or dynamics model exists.
@@ -796,3 +745,11 @@ if __name__ == "__main__":
 # +--------------------------------------------------------------------+
 # | END OF REFERENCE GUIDE                                             |
 # +--------------------------------------------------------------------+
+
+# CURRENT TAKEOFF TASK
+# 1. Establish supported rotor thrust inputs and a helicopter-mode rotor model.
+# 2. Convert loaded aircraft weight to SI and define takeoff mass/loading.
+# 3. Compare upward rotor thrust and other vertical loads with weight.
+# 4. Model ground support while grounded, then vertical motion after liftoff.
+# 5. Validate thrust and liftoff against supported reference cases.
+# Transition, airplane flight, landing and FBW are outside this task.

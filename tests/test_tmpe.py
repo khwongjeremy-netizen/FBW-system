@@ -1,4 +1,7 @@
 """Kinematic sign/frame checks; no aircraft coefficient assumptions."""
+import contextlib
+import io
+from unittest.mock import patch
 import importlib.util
 import math
 from pathlib import Path
@@ -71,6 +74,29 @@ class AoATests(unittest.TestCase):
     def test_nonfinite_rejected(self):
         with self.assertRaises(ValueError):
             self.flow((float('nan'), 0, 0))
+
+
+class GroundStartTests(unittest.TestCase):
+    def test_initial_state_is_stationary_on_ground(self):
+        state = tmpe.AircraftState()
+        self.assertEqual(state.height_agl_m, 0.0)
+        self.assertEqual(state.ground_velocity_ned, (0.0, 0.0, 0.0))
+        self.assertEqual((state.roll, state.pitch, state.yaw), (0.0, 0.0, 0.0))
+
+    def test_ground_start_at_nonzero_field_elevation(self):
+        output = io.StringIO()
+        # Only environmental inputs remain; field elevation is not height AGL.
+        with patch('builtins.input', side_effect=['', '', '', '', '500']) as prompts:
+            with contextlib.redirect_stdout(output):
+                tmpe.main(['--verbose'])
+        self.assertEqual(prompts.call_count, 5)
+        text = output.getvalue()
+        self.assertIn('helicopter-mode vertical takeoff', text)
+        self.assertIn('on the ground, stationary, level, facing north', text)
+        self.assertIn('height above ground = 0.00 m', text)
+        self.assertIn('Ground elevation (MSL): 500.00 m', text)
+        self.assertIn('Prescribed ground velocity NED: (0.00, 0.00, 0.00) m/s', text)
+        self.assertIn('Takeoff status: not simulated', text)
 
 
 if __name__ == '__main__':

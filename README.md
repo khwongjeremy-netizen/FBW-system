@@ -1,16 +1,22 @@
 # TMPE — Tiltrotor Modeling Physics Engine
 
-An independent Python project for learning how aerodynamic physics and pilot-assistance software systems work on a tiltrotor, using the NASA/Bell XV-15 as a reference aircraft.
+An educational Python project focused on the NASA/Bell XV-15 generating rotor lift and taking off vertically in helicopter mode.
 
 ## Overview
 
-TMPE is a hands-on project using NASA/BELL's XV-15 data to explore aerodyanmics physics and software pilot assistance applied to a tiltrotor. Future goals include modeling aircraft motion and adding basic pilot-assistance and flight-by-wire systems.
+The current task is limited to helicopter-mode lift generation and vertical takeoff. Every run begins on the ground, stationary, level and facing north. Transition, airplane flight, landing and flight-by-wire systems are outside this task.
 
-> **Current state:** 
-- Early prototype
-- To calculate the freestream angle of attack from prescribed initial state, but does not simulate aircraft responses or calculate nonzero aerodynamic forces.
-- While the XV-15 xml data files have been fact checked a couple of times
-- AI Gen Code is not systematically human-reviewed or fact-checked; many errors may remain.
+**Current state:** early prototype. The program calculates freestream wing angle of attack from the fixed ground-start state and wind. Rotor thrust, nonzero aerodynamic forces and vertical takeoff motion are not implemented yet. XML values and generated code still require systematic verification.
+
+## Ground-start takeoff scenario
+
+- **Mode:** helicopter only; no mode selection.
+- **Starting position:** on the ground, at zero height above ground.
+- **Starting motion:** stationary, level and facing north; no airborne or custom initial-state option.
+- **Inputs:** ground-level environmental conditions only. Ground elevation above sea level does not change the initial height above ground.
+- **Project task:** model rotor lift generation and vertical liftoff. Transition, airplane flight, landing and flight-by-wire are outside the current scope.
+
+The current run reports initial wing airflow and leaves the aircraft in its ground state. It explicitly reports takeoff as not simulated until rotor thrust and vertical motion are implemented.
 
 ## Current features
 
@@ -30,7 +36,7 @@ TMPE is a hands-on project using NASA/BELL's XV-15 data to explore aerodyanmics 
 
 - `try_load()` warns on missing or invalid values and leaves them unknown (`None`).
 
-- Prompts for a flight-mode label and pilot-command label, plus air density (kg/m³), wind speed (m/s), wind direction (degrees), temperature (°C), and altitude (m).
+- Uses a fixed helicopter-mode ground start. Prompts only for air density (kg/m³), wind speed (m/s), wind FROM direction (degrees), temperature (°C), and ground elevation above sea level (m). Ground elevation does not put the aircraft in the air; initial height above ground is zero.
 
 - Prints a concise results report; `--verbose` adds entered conditions, aircraft properties and the full AoA calculation trace.
 
@@ -58,11 +64,11 @@ L = 0.5 * ρ * V² * S * CL
 
 - `calculate_lift()` implements the equation, and `S` loads from XML, but the interactive program does not call the helper yet. `aerodynamics.xml` includes approximate lift-curve slope and zero-lift-angle metadata, but no complete verified `CL(α)` lookup data.
 
-- TMPE calculates airspeed and wing AoA from prescribed aircraft ground velocity and attitude plus wind. It does not request AoA or infer motion from commands. CL/CD/Cm tables remain unavailable; nonzero-speed forces are explicitly unavailable. At exactly zero freestream speed, freestream force is zero without evaluating coefficients.
+- TMPE calculates airspeed and wing AoA from the fixed stationary, level, north-facing ground state plus wind. It does not request AoA, pilot commands or a custom initial state. CL/CD/Cm tables remain unavailable; nonzero-speed forces are explicitly unavailable. At exactly zero freestream speed, freestream force is zero without evaluating coefficients.
 
 ### AoA and coordinate conventions
 
-Wing AoA is the angle between the wing chord and incoming relative airflow. It changes with flight state; it is not a fixed XV-15 parameter or an environmental input. Pitch attitude, wing mounting incidence, air-relative flight-path angle, nacelle tilt and rotor-blade pitch are distinct. Wing AoA must not be used as rotor-blade AoA. A requested climb rate is a target, not actual velocity or attitude.
+Wing AoA is the angle between the wing chord and incoming relative airflow. It changes with flight state; it is not a fixed XV-15 parameter or an environmental input. Pitch attitude, wing mounting incidence, air-relative flight-path angle, nacelle tilt and rotor-blade pitch are distinct. Wing AoA must not be used as rotor-blade AoA.
 
 World axes are North/East/Down (NED); body axes are forward/right/down. Velocities use m/s, internal angles radians and displayed/input angles degrees. Positive right-handed roll lowers the right wing, pitch raises the nose, and yaw turns north toward east. Attitude uses a yaw-pitch-roll (3-2-1) body-to-world rotation; its transpose transforms world vectors into body coordinates.
 
@@ -74,7 +80,7 @@ The single reference-wing approximation uses the XML incidence (currently 3°). 
 
 Chord-plane speed below `1e-6 m/s` leaves AoA explicitly undefined, including zero-speed and purely spanwise flow. No invalid coefficient is evaluated. The threshold is numerical, not a physical force cutoff: nonzero-speed forces remain unavailable without coefficient data. Hover rotor wash can load the wing even when freestream force is zero; that flow is not modeled. Rotor thrust and vertical dynamics remain separate, unimplemented systems.
 
-The verbose report traces ground/wind vectors, subtraction, prescribed attitude, both rotation matrices, body/wing velocities, incidence and the numeric `atan2` result. Initial-state defaults assume stationary, level, north-facing aircraft; these are scenario assumptions, not verified aircraft data or dynamically simulated motion.
+The verbose report traces ground/wind vectors, subtraction, prescribed attitude, both rotation matrices, body/wing velocities, incidence and the numeric `atan2` result. Every interactive run uses a fixed stationary, level, north-facing ground state; these are scenario assumptions, not dynamically simulated motion.
 
 - XML values include units and source metadata where available. Unknown values are not filled by guesswork; source notes flag data that still needs checking against original reports.
 
@@ -103,8 +109,8 @@ The repository also includes `data(v.2).zip`. The program reads the data directo
   python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py'
   ```
 
-- Enter an aircraft mode, a pilot-command label and environmental values. For initial conditions, answer `Use default initial state: stationary, level, facing north? [Y/n]`. Enter or `y` accepts that state; `n` asks for individual NED ground-velocity and roll/pitch/yaw values. No AoA input is needed.
-- Commands and modes are recorded only; they do not control simulated aircraft behavior.
+- Enter ground-level environmental values, or press Enter to accept each default. There are no mode, command or initial-state choices.
+- The program reports initial wing airflow and explicitly reports takeoff as not simulated. Rotor thrust and vertical motion are still missing.
 
 With all defaults, the normal results are:
 
@@ -114,6 +120,11 @@ Airspeed:           5.00 m/s
 Wing AoA:          -177.0°
 Wing lift:          Unavailable — aerodynamic model missing
 Flow condition:     Reverse flow
+
+Takeoff status: not simulated — rotor thrust and vertical motion model missing.
+Aircraft remains at its initial ground state; height above ground = 0.00 m.
+Wing results describe freestream airflow only; they do not determine rotor lift or liftoff.
+Educational prototype; not a validated flight simulator.
 ```
 
 Assumptions and model limitations remain visible in a few short lines. For the complete numerical trace, initial state used, aircraft data and environmental conditions, run:
@@ -134,16 +145,17 @@ TMPE is **not a validated flight simulator**. The current version also does not 
 - Flight-by-wire laws or control of a real aircraft.
 - Validation against flight-test data. XML provenance and extracted parameter citations also require further verification.
 
-Pilot commands and flight modes are labels only; no trajectory is calculated.
+The scenario is fixed to helicopter-mode ground takeoff; no takeoff trajectory is calculated yet.
 
 ## Roadmap
 
-All items are planned, not implemented:
+All items are planned, not implemented, and serve the ground-to-liftoff task:
 
-1. **Foundation:** Refine XML loading and reporting, aircraft/environment structures, unit consistency, and basic aerodynamic calculations.
-2. **Physical modeling:** Research rotor thrust and fuller aerodynamic forces; extend the documented coordinate frames and document missing parameters.
-3. **Flight dynamics:** Add force/moment equations and translational/rotational motion; compare with appropriate published XV-15 data.
-4. **Control exploration:** Separate pilot commands from aircraft dynamics and investigate control logic responding to aircraft state and pilot intent.
+1. Establish supported helicopter-mode rotor thrust data, rotor settings and operating limits.
+2. Define takeoff mass/loading and convert aircraft weight to SI units.
+3. Calculate upward rotor thrust and other vertical loads, then compare them with weight. Wing freestream lift alone does not establish takeoff capability.
+4. Model ground support before liftoff and vertical acceleration, velocity and height after liftoff.
+5. Validate thrust and vertical takeoff against supported XV-15 reference cases.
 
 ## Sources
 
