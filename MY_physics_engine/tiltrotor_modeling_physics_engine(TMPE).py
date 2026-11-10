@@ -37,7 +37,6 @@ G = 9.80665
 
 
 def fetchvalue(filename, name):
-    """Load a numeric XML element identified by its name attribute."""
     file_path = DATA_DIR / filename
     root = ET.parse(file_path).getroot()
 
@@ -51,7 +50,6 @@ def fetchvalue(filename, name):
 
 
 def fetchpara(filename, tag_path, attribute=None):
-    """Load a value from an XML tag path, optionally reading an attribute."""
     file_path = DATA_DIR / filename
     root = ET.parse(file_path).getroot()
     element = root.find(tag_path)
@@ -71,7 +69,6 @@ def fetchpara(filename, tag_path, attribute=None):
 
 
 def try_load(loader, *args):
-    """Load a parameter if possible; otherwise keep it unknown and warn."""
     try:
         return loader(*args)
     except (OSError, ET.ParseError, ValueError) as error:
@@ -147,17 +144,13 @@ FLOW_EPS_MPS = 1e-6
 
 @dataclass(frozen=True)
 class AircraftState:
-    """Velocity and attitude, defaulting to a stationary ground start."""
-
     ground_velocity_ned: tuple = (0.0, 0.0, 0.0)
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
-    height_agl_m: float = 0.0
 
 
 def world_to_body_matrix(state):
-    """Transpose of the active body-to-NED yaw-pitch-roll rotation."""
     cr, sr = math.cos(state.roll), math.sin(state.roll)
     cp, sp = math.cos(state.pitch), math.sin(state.pitch)
     cy, sy = math.cos(state.yaw), math.sin(state.yaw)
@@ -173,27 +166,11 @@ def transform(matrix, vector):
 
 
 def wind_velocity_ned(speed, from_degrees):
-    """Horizontal meteorological wind FROM clockwise from true north.
-
-    E.g. FROM north yields air moving south, a negative north component.
-    Vertical wind is assumed zero; direction is immaterial at zero speed.
-    """
     direction = math.radians(from_degrees)
     return (-speed * math.cos(direction), -speed * math.sin(direction), 0.0)
 
 
 def calculate_aoa(state, environment, incidence_deg):
-    """Freestream AoA from prescribed motion, orientation and wing geometry.
-
-    AoA is the chord/relative-airflow angle, not an environmental or fixed
-    aircraft parameter. Wing AoA is distinct from rotor-blade AoA, nacelle
-    tilt, blade pitch and aircraft attitude. Incoming flow is -V_air.
-    Wing x is forward along the chord, y right, z down. Positive incidence
-    raises the leading edge: body-to-wing = Ry(incidence). Sweep, dihedral,
-    panel variation, rotor wash, induced flow and local angular-rate flow
-    are excluded from this single reference-wing model.
-    atan2(w, u) preserves quadrants and positive nose-up AoA; no clamping.
-    """
     values = (*state.ground_velocity_ned, state.roll, state.pitch, state.yaw,
               environment.windspeed, environment.winddirection)
     if not all(math.isfinite(v) for v in values) or environment.windspeed < 0:
@@ -226,13 +203,6 @@ def calculate_aoa(state, environment, incidence_deg):
 
 
 def wing_aerodynamics(flow):
-    """Separate kinematic AoA validity from coefficient availability.
-
-    No supported CL/CD/Cm tables exist in the supplied XML. Do not turn
-    approximate curve descriptors into a force model. Exact zero freestream
-    speed gives zero freestream force without evaluating any coefficient;
-    the AoA numerical threshold is not a force cutoff.
-    """
     if flow['speed'] == 0.0:
         return dict(status='zero freestream force; rotor wash excluded',
                     force_body_n=(0.0, 0.0, 0.0))
@@ -267,7 +237,6 @@ def angle_text(angle, reason="insufficient chord-plane airflow"):
 
 
 def flow_condition(flow):
-    """Describe flow for display using full-precision values, not rounded text."""
     if flow['speed'] == 0.0:
         return "No freestream airflow"
     if flow['wing'] is None:
@@ -383,12 +352,6 @@ def ask_float(prompt, default=None, minimum=None, places=2):
 
 
 def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
-    """Calculate wing lift when supplied with model-derived inputs.
-
-    L = 0.5 * rho * V^2 * S * CL
-    The interactive program does not call this until a verified CL model
-    and an airspeed source are available.
-    """
     if None in (air_density, airspeed, wing_area_m2, lift_coefficient):
         return None
 
@@ -400,9 +363,7 @@ def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="TMPE — XV-15 helicopter-mode lift and vertical takeoff from the ground."
-    )
+    parser = argparse.ArgumentParser(description="TMPE — Tiltrotor Modeling Physics Engine")
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="show aircraft data and the complete AoA calculation trace")
     args = parser.parse_args(argv)
@@ -459,7 +420,7 @@ def main(argv=None):
 
     report_results(flow, aero)
     print("\nTakeoff status: not simulated — rotor thrust and vertical motion model missing.")
-    print(f"Aircraft remains at its initial ground state; height above ground = {format_number(state.height_agl_m)} m.")
+    print("Aircraft remains at its initial ground state; height above ground = 0.00 m.")
     print("Wing results describe freestream airflow only; they do not determine rotor lift or liftoff.")
     print("Educational prototype; not a validated flight simulator.")
     if args.verbose:
@@ -611,7 +572,6 @@ if __name__ == "__main__":
 # altitude          = Ground elevation above sea level (m), not height AGL.
 # state             = AircraftState object: prescribed velocity and attitude.
 # ground_velocity_ned = Aircraft velocity over the ground: north/east/down (m/s).
-# height_agl_m      = Height above local ground (m); initially zero.
 # roll / pitch / yaw = Aircraft orientation angles (radians): positive means
 #                      right wing down / nose up / turning north toward east.
 # angles            = Roll/pitch/yaw tuple in degrees for report_aoa().
