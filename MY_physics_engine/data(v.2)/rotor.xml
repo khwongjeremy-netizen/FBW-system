@@ -26,8 +26,6 @@
     <design_rotor_speed mode="hover" unit="rpm" tip_speed="740 ft/s" location="table 4.5, p. 25; p. 19">565</design_rotor_speed>
     
     <design_rotor_speed mode="cruise" unit="rpm" tip_speed="600 ft/s" location="table 4.5, p. 25; p. 19">458</design_rotor_speed>
-
-    <thrust_coefficient unit="1" 
     
     <test_rotor_speed mode="hover" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">589</test_rotor_speed>
     <test_rotor_speed mode="cruise" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">517</test_rotor_speed>
