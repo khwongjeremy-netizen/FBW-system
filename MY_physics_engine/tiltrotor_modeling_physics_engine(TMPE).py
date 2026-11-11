@@ -12,16 +12,16 @@
 # ============================================================
 # air_world  : Aircraft velocity relative to air, in north/east/down axes.
 # body_alpha : Angle of attack relative to the aircraft body (radians).
-# alpha      : Angle of attack relative to the wing, including incidence.
-# displayed  : Rounded text for printing; calculations keep full precision.
-# flow       : Dictionary holding airflow vectors, angles and their status.
-# aero       : Dictionary holding force availability and the force result.
+# alpha      : Wing angle of attack, including mounting incidence.
+# flow       : Dictionary of airflow vectors, angles and their status.
+# aero       : Dictionary of force availability and force results.
+# diagnostics: Parameter records containing values, sources and load status.
+# displayed  : Rounded text; calculations keep full precision.
 # None       : Unknown or unavailable; never a substitute for zero.
 #
-# BOTTOM REFERENCE GUIDE — search for these headings:
-#   A. HOW THE CODE WORKS       Step-by-step calculation and examples.
-#   B. DETAILED VARIABLE WORD BANK
-#   C. MISSING DATA AND CURRENT ISSUES
+# Detailed variable word bank is at the bottom of this file.
+# Physics reference: ../docs/TMPE_REFERENCE.md
+# Debugging guide: ../docs/TMPE_DEBUGGING.md
 # ============================================================
 
 from pathlib import Path
@@ -99,61 +99,209 @@ def recovery_length_ft(items, name):
     return value * factors[item['unit']]
 
 
+def load_parameter(records, name, filename, path, unit, meaning, *, used=False, text=False):
+    """Read one value and keep its source and failure in the shared load ledger."""
+    row = dict(name=name, meaning=meaning, file=filename, path=path, value=None,
+               unit=unit, status='MISSING', reason='', used=used, citation={})
+    records[name] = row
+    try:
+        root = ET.parse(DATA_DIR / filename).getroot()
+        element_path, separator, attribute = path.partition('/@')
+        node = root.find(element_path)
+        if node is None:
+            raise KeyError(f'XML element not found: {element_path}')
+        # Metadata may be inherited from a containing section.
+        def inherit(current, parents):
+            combined = dict(parents, **current.attrib)
+            if current is node:
+                return combined
+            for child in current:
+                found = inherit(child, combined)
+                if found is not None:
+                    return found
+            return None
+        metadata = inherit(root, {})
+        row['citation'] = {key: metadata[key] for key in
+                           ('source', 'location', 'url', 'provenance', 'citation_status') if key in metadata}
+        source_unit = node.get(f'{attribute}_unit') if separator else node.get('unit')
+        source_unit = source_unit or ('1' if unit == '1' else None)
+        row['source_unit'] = source_unit
+        raw = node.get(attribute) if separator else node.text
+        if raw is None:
+            raise KeyError(f'XML value/attribute missing at {path}')
+        if not raw.strip():
+            raise ValueError(f'Empty XML value at {path}')
+        if text:
+            value = raw.strip()
+        else:
+            value = float(raw)
+            if not math.isfinite(value):
+                raise ValueError('Numeric value must be finite')
+            if source_unit != unit:
+                lengths = {'in': 1 / 12, 'ft': 1.0, 'm': 1 / .3048}
+                if source_unit in lengths and unit in lengths:
+                    value *= lengths[source_unit] / lengths[unit]
+                else:
+                    raise ValueError(f'Expected unit {unit}; found {source_unit!r}')
+        row['value'] = value
+        supplied = 'unverified' in metadata.get('status', '').lower()
+        row['status'] = 'UNVERIFIED' if supplied else 'LOADED'
+        row['reason'] = ('Existing data marked unverified in XML.' if supplied else
+                         'Loaded successfully; LOADED does not assert independent verification.')
+        return value
+    except (FileNotFoundError, KeyError) as error:
+        row.update(status='MISSING', reason=str(error))
+    except (OSError, ET.ParseError, ValueError, TypeError) as error:
+        row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+    return None
+
+
+def load_recovery_items(records):
+    """Keep citations and isolate malformed recovery items from other parameters."""
+    path = 'notebooklm_geometry_recovery'
+    try:
+        items = load_geometry_recovery()
+    except (OSError, ET.ParseError, ValueError, KeyError) as error:
+        records['geometry_recovery'] = dict(name='geometry_recovery', meaning='Supplied geometry collection',
+            file='geometry.xml', path=path, value=None, unit='mixed', used=False,
+            status='MISSING' if isinstance(error, (FileNotFoundError, KeyError)) or 'section is missing' in str(error) else 'INVALID',
+            reason=f'{type(error).__name__}: {error}')
+        return None
+    records['geometry_recovery'] = dict(name='geometry_recovery', meaning='Supplied geometry collection',
+        file='geometry.xml', path=path, value=f'{len(items)} items', unit='mixed', used=False,
+        status='UNVERIFIED', reason='Collection loaded; see individual item validation and citations.')
+    for name, item in items.items():
+        unit = item.get('unit', '')
+        item_path = f"{path}/item[@name='{name}']"
+        value = load_parameter(records, f'geometry_recovery.{name}', 'geometry.xml',
+                               item_path, unit, item.get('definition', name), text=unit == 'text')
+        if value is not None:
+            item['value'] = value
+    return items
+
+
+def physics_diagnostics(flow, aero):
+    """Classify existing runtime results without changing or recomputing physics."""
+    force = aero['force_body_n']
+    condition = flow_condition(flow)
+    unsupported = condition in ('Reverse flow', 'Near-normal flow', 'Spanwise flow')
+    return {
+        'Airspeed': ('CALCULATED', format_quantity(flow['speed'], 'm/s')),
+        'Wing AoA': ('CALCULATED' if flow['alpha'] is not None else 'UNAVAILABLE',
+                     angle_text(flow['alpha']) if flow['alpha'] is not None else flow['status']),
+        'CL coefficient': ('UNAVAILABLE', 'No supported CL model available; approximate XML descriptors are not lookup arrays.'),
+        'Wing freestream force': ('CALCULATED' if force is not None else 'UNSUPPORTED' if unsupported else 'UNAVAILABLE', aero['status']),
+        'Wing lift': ('CALCULATED' if force == (0.0, 0.0, 0.0) else 'UNSUPPORTED' if unsupported else 'UNAVAILABLE',
+                      '0.00 N; zero freestream only, rotor wash excluded.' if force == (0.0, 0.0, 0.0) else aero['status']),
+        'Rotor thrust': ('NOT IMPLEMENTED', 'No rotor thrust calculation exists.'),
+        'Vertical dynamics': ('NOT IMPLEMENTED', 'No ground support or vertical motion integration exists.'),
+        'Helicopter takeoff': ('NOT IMPLEMENTED', 'Rotor thrust and vertical dynamics are not implemented.'),
+    }
+
+
+def report_diagnostics(aircraft, flow, aero):
+    print('\nTMPE :: DIAGNOSTIC REPORT\nAIRCRAFT DATA')
+    for name, row in aircraft.diagnostics.items():
+        print(f"  {name}: {row['status']} | {row['meaning']}")
+        print(f"    Source: {DATA_DIR / row['file']} :: {row['path']}")
+        print(f"    Value: {row['value']!r} {row['unit']} | "
+              f"{'used in live physics' if row['used'] else 'not used in live physics'}")
+        if row.get('source_unit') != row['unit'] and 'source_unit' in row:
+            print(f"    XML unit: {row['source_unit']!r}")
+        print(f"    {row['reason']}")
+        if row.get('dependencies'):
+            print('    Inputs: ' + ', '.join(row['dependencies']))
+        if row.get('citation'):
+            print('    Citation: ' + '; '.join(f'{key}={value}' for key, value in row['citation'].items()))
+    results = physics_diagnostics(flow, aero)
+    print('\nPHYSICS')
+    for name, (status, reason) in results.items():
+        print(f'  {name}: {status} — {reason}')
+    print('\nBLOCKERS')
+    for name, (status, reason) in results.items():
+        if status != 'CALCULATED':
+            print(f'  {name}: {reason}')
+    if flow['wing'] is None:
+        row = aircraft.diagnostics['wing_incidence_deg']
+        print(f"  Wing AoA input: {row['file']} :: {row['path']} — {row['reason']}")
+
+
 class Aircraft:
     """Selected XV-15 parameters loaded from XML."""
 
     def __init__(self):
-        self.design_gross = try_load(fetchvalue, "mass.xml", "design_gross")
-
-        self.wing_span_ft = try_load(
-            fetchpara, "geometry.xml", "geometry/wing/span"
+        self.diagnostics = {}
+        # name, XML file/path, expected unit, meaning, used in live physics
+        specs = (
+            ('design_gross', 'mass.xml', ".//*[@name='design_gross']", 'lb', 'Design gross weight', False),
+            ('wing_span_ft', 'geometry.xml', 'geometry/wing/span', 'ft', 'Wing span', False),
+            ('wing_area_ft2', 'geometry.xml', 'geometry/wing/area', 'ft^2', 'Wing reference area', False),
+            ('wing_chord_ft', 'geometry.xml', 'geometry/wing/chord', 'ft', 'Wing chord', False),
+            ('wing_aspect_ratio', 'geometry.xml', 'geometry/wing/aspect_ratio', '1', 'Wing aspect ratio', False),
+            ('wing_incidence_deg', 'geometry.xml', 'geometry/wing/incidence', 'deg', 'Wing mounting incidence', True),
+            ('fuselage_length_ft', 'geometry.xml', 'geometry/fuselage/@length', 'ft', 'Fuselage length', False),
+            ('rotor_diameter_ft', 'rotor.xml', 'proprotor_and_drive_system/rotor_diameter', 'ft', 'Rotor diameter', False),
+            ('rotor_blades_per_hub', 'rotor.xml', 'proprotor_and_drive_system/rotor_blades_per_hub', '1', 'Blades per hub', False),
         )
-        self.wing_area_ft2 = try_load(
-            fetchpara, "geometry.xml", "geometry/wing/area"
-        )
-        self.wing_chord_ft = try_load(
-            fetchpara, "geometry.xml", "geometry/wing/chord"
-        )
-        self.wing_aspect_ratio = try_load(
-            fetchpara, "geometry.xml", "geometry/wing/aspect_ratio"
-        )
-        self.wing_incidence_deg = try_load(
-            fetchpara, "geometry.xml", "geometry/wing/incidence"
-        )
-        self.fuselage_length_ft = try_load(
-            fetchpara, "geometry.xml", "geometry/fuselage", "length"
-        )
-        self.rotor_diameter_ft = try_load(
-            fetchpara, "rotor.xml",
-            "proprotor_and_drive_system/rotor_diameter"
-        )
-        self.rotor_blades_per_hub = try_load(
-            fetchpara, "rotor.xml",
-            "proprotor_and_drive_system/rotor_blades_per_hub"
-        )
-
-        self.rotor_hub_positions = None
+        for name, filename, path, unit, meaning, used in specs:
+            value = load_parameter(self.diagnostics, name, filename, path, unit, meaning, used=used)
+            setattr(self, name, value)
+        self.geometry_recovery = load_recovery_items(self.diagnostics)
+        self.rotor_hub_positions_frame = 'aircraft datum FS/BL/WL, ft; aft/right/up'
+        self.rotor_hub_positions = self._recovered_group('rotor_hub_positions', {
+            side: [f'hub_{side}_{axis}_in' for axis in ('fs', 'bl', 'wl')]
+            for side in ('left', 'right')})
+        self.fuselage_width_range_ft = self._recovered_group('fuselage_width_range_ft',
+            ['fuselage_exterior_width_min_ft', 'fuselage_exterior_width_max_ft'])
+        for name, item in (
+            ('fuselage_height_ft', 'fuselage_exterior_depth_ft'),
+            ('fuselage_interior_width_ft', 'fuselage_interior_max_width_ft'),
+            ('rotor_radius_ft', 'rotor_radius_ft'),
+        ):
+            setattr(self, name, self._recovered_group(name, [item], scalar=True))
         self.fuselage_width_ft = None
-        self.fuselage_height_ft = None
-        self.geometry_recovery = try_load(load_geometry_recovery)
         self.isolated_nacelle_polars = None
-        if self.geometry_recovery is not None:
-            items = self.geometry_recovery
-            # Conversion-axis locations in the original NASA datum (aft/right/up).
-            # These are NOT rotor centers in TMPE's forward/right/down CG frame.
-            self.rotor_hub_positions = {
-                side: tuple(recovery_length_ft(items, f'hub_{side}_{axis}_in')
-                            for axis in ('fs', 'bl', 'wl'))
-                for side in ('left', 'right')
-            }
-            self.rotor_hub_positions_frame = 'aircraft datum FS/BL/WL, ft; aft/right/up'
-            self.fuselage_width_range_ft = tuple(
-                recovery_length_ft(items, f'fuselage_exterior_width_{bound}_ft')
-                for bound in ('min', 'max'))
-            # No single exterior width was provided; retain the scalar as unknown.
-            self.fuselage_height_ft = recovery_length_ft(items, 'fuselage_exterior_depth_ft')
-            self.fuselage_interior_width_ft = recovery_length_ft(items, 'fuselage_interior_max_width_ft')
-            self.rotor_radius_ft = recovery_length_ft(items, 'rotor_radius_ft')
+        for name, filename, path, meaning, reason in (
+            ('fuselage_width_ft', 'geometry.xml', 'notebooklm_geometry_recovery',
+             'Single exterior width', 'Intentionally None: only a 5.0–5.2 ft range was supplied.'),
+            ('isolated_nacelle_polars', 'aerodynamics.xml', 'aerodynamics/wing_pylon_coefficients/numerical_lookup_arrays',
+             'Isolated nacelle aerodynamic polars', 'Intentionally None: supported numerical coefficient arrays are not supplied.'),
+        ):
+            self.diagnostics[name] = dict(name=name, meaning=meaning, file=filename, path=path,
+                value=None, unit='ft' if name == 'fuselage_width_ft' else '1',
+                status='MISSING', reason=reason, used=False)
+
+    def _recovered_group(self, name, keys, scalar=False):
+        """Only build a derived field when every cited input loaded successfully."""
+        flat = [key for group in keys.values() for key in group] if isinstance(keys, dict) else keys
+        dependencies = [f'geometry_recovery.{key}' for key in flat]
+        for key, dependency in zip(flat, dependencies):
+            if dependency not in self.diagnostics:
+                load_parameter(self.diagnostics, dependency, 'geometry.xml',
+                    f"notebooklm_geometry_recovery/item[@name='{key}']", 'ft',
+                    key.replace('_', ' '))
+            elif self.diagnostics[dependency]['value'] is not None:
+                try:
+                    recovery_length_ft(self.geometry_recovery, key)
+                except (KeyError, ValueError, TypeError) as error:
+                    self.diagnostics[dependency].update(value=None, status='INVALID',
+                        reason=f'{type(error).__name__}: {error}')
+        failures = [key for key in dependencies
+                    if key not in self.diagnostics or self.diagnostics[key]['value'] is None]
+        value = None
+        if not failures:
+            def lengths(group):
+                return tuple(recovery_length_ft(self.geometry_recovery, key) for key in group)
+            value = {side: lengths(group) for side, group in keys.items()} if isinstance(keys, dict) else lengths(keys)
+            if scalar:
+                value = value[0]
+        status = 'UNVERIFIED' if not failures else (
+            'INVALID' if any(self.diagnostics.get(key, {}).get('status') == 'INVALID' for key in failures) else 'MISSING')
+        self.diagnostics[name] = dict(name=name, meaning=name.replace('_', ' '),
+            file='geometry.xml', path='notebooklm_geometry_recovery/item', value=value,
+            unit='ft', status=status, used=False, dependencies=dependencies,
+            reason='Blocked by: ' + ', '.join(failures) if failures else 'Derived from cited recovery items; not used by live physics.')
+        return value
 
     @property
     def wing_area_m2(self):
@@ -193,6 +341,7 @@ class AircraftState:
 
 
 def world_to_body_matrix(state):
+    """Transpose of body-to-NED yaw/pitch/roll rotation (forward/right/down)."""
     cr, sr = math.cos(state.roll), math.sin(state.roll)
     cp, sp = math.cos(state.pitch), math.sin(state.pitch)
     cy, sy = math.cos(state.yaw), math.sin(state.yaw)
@@ -218,6 +367,7 @@ def calculate_aoa(state, environment, incidence_deg):
     if not all(math.isfinite(v) for v in values) or environment.windspeed < 0:
         raise ValueError("State and wind must be finite, with non-negative wind speed.")
     wind = wind_velocity_ned(environment.windspeed, environment.winddirection)
+    # Air-relative velocity = ground velocity minus wind, in NED axes.
     air_world = tuple(g - w for g, w in zip(state.ground_velocity_ned, wind))
     rotation = world_to_body_matrix(state)
     body = transform(rotation, air_world)
@@ -231,6 +381,7 @@ def calculate_aoa(state, environment, incidence_deg):
         return result
     if not math.isfinite(incidence_deg):
         raise ValueError("Wing incidence must be finite.")
+    # Apply mounting incidence once, then alpha = atan2(wing down, forward).
     i = math.radians(incidence_deg)
     wing_rotation = ((math.cos(i), 0.0, -math.sin(i)),
                      (0.0, 1.0, 0.0),
@@ -366,13 +517,6 @@ def report_details(environment, aircraft, aero):
                                                      reason='aerodynamic model missing')),
     ):
         print(f"{label}: {value}")
-    if aircraft.geometry_recovery is not None:
-        print('\n--- NotebookLM geometry claims (not independently verified) ---')
-        for name, item in aircraft.geometry_recovery.items():
-            print(f"{name}: {item['value']} {item['unit']}")
-            print(f"  {item['definition']}")
-            print(f"  Citation: {item['source']}; {item['location']}; {item['url']}")
-        print('Hub positions use aircraft datum coordinates, not CG body coordinates.')
 
 
 def ask_float(prompt, default=None, minimum=None, places=2):
@@ -407,6 +551,7 @@ def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
     if air_density < 0 or airspeed < 0 or wing_area_m2 <= 0:
         raise ValueError("Density and airspeed must be non-negative; wing area must be positive.")
 
+    # Wing lift L = 1/2 rho V² S CL; no supported CL model is supplied here.
     return 0.5 * air_density * airspeed**2 * wing_area_m2 * lift_coefficient
 
 
@@ -415,6 +560,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="TMPE — Tiltrotor Modeling Physics Engine")
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="show aircraft data and the complete AoA calculation trace")
+    parser.add_argument('--diagnostics', action='store_true',
+                        help='show parameter sources, load failures and physics blockers')
     args = parser.parse_args(argv)
     print("\nTMPE — Tiltrotor Modeling Physics Engine")
 
@@ -472,6 +619,14 @@ def main(argv=None):
     print(f"Aircraft remains at its initial ground state; height above ground = {format_number(state.height_agl_m)} m.")
     print("Wing results describe freestream airflow only; they do not determine rotor lift or liftoff.")
     print("Educational prototype; not a validated flight simulator.")
+    if args.diagnostics:
+        report_diagnostics(aircraft, flow, aero)
+    elif not args.verbose:
+        failures = sum(row['status'] in ('MISSING', 'INVALID')
+                       and not row['reason'].startswith('Intentionally')
+                       for row in aircraft.diagnostics.values())
+        if failures:
+            print(f'Data loading issues: {failures}; use --diagnostics for source paths and reasons.')
     if args.verbose:
         report_details(environment, aircraft, aero)
         report_aoa(state, aircraft, flow)
@@ -480,66 +635,7 @@ def main(argv=None):
 if __name__ == "__main__":
     main()
 
-# ======================================================================
-# +--------------------------------------------------------------------+
-# | TMPE REFERENCE GUIDE                                                |
-# | Read alongside the code; these comments do not run or print.         |
-# +--------------------------------------------------------------------+
-#
-# +--------------------------------------------------------------------+
-# | A. HOW THE CODE WORKS                                               |
-# +--------------------------------------------------------------------+
-#
-# 1. LOAD THE AIRCRAFT — Aircraft(), fetchvalue(), fetchpara(), try_load()
-#    - Read selected mass, geometry and rotor values from XML.
-#    - Convert wing area from ft² to m² when wing_area_m2 is requested.
-#    - Keep failed loads as None and print a data warning.
-#
-# 2. SET UP GROUND TAKEOFF — main(), Environment, AircraftState
-#    - Ask only for ground-level environmental conditions.
-#    - Always start in helicopter mode, on the ground and at rest.
-#    - Attitude is fixed initially: level and facing north.
-#    - Ground elevation is not aircraft height above ground.
-#    - Motion and takeoff are not yet simulated.
-#
-# 3. SUBTRACT WIND — wind_velocity_ned(), calculate_aoa()
-#    - Convert the wind's FROM direction into a velocity toward its destination.
-#    - air_world = ground_velocity_ned - wind, component by component.
-#    - Example: northward ground speed 10 m/s and northward wind 3 m/s
-#      give northward air-relative speed 7 m/s.
-#    - Airspeed is the length of air_world, including all three components.
-#    - Incoming airflow points opposite to this air-relative velocity.
-#
-# 4. CHANGE THE VIEWING AXES — world_to_body_matrix(), transform()
-#    - rotation turns the NED components into aircraft body components.
-#    - wing_rotation then accounts for the fixed wing mounting incidence.
-#    - air_world -> body -> wing describes the SAME velocity in three frames.
-#    - These rotations change its components, not its physical speed.
-#
-# 5. FIND THE ANGLE — calculate_aoa()
-#    - body_alpha = atan2(body down component, body forward component).
-#    - alpha = atan2(wing down component, wing forward component).
-#    - atan2 preserves forward/reverse-flow quadrants; angles are not clamped.
-#    - Example: level northbound flight, calm air, 3° wing incidence:
-#      body_alpha is 0° and wing alpha is 3°.
-#    - Wing AoA needs known incidence and enough forward/down-plane airflow.
-#      Purely sideways airflow can have airspeed but no defined wing AoA.
-#
-# 6. CHECK FORCE AVAILABILITY — wing_aerodynamics(), calculate_lift()
-#    - Exactly zero freestream speed produces a zero freestream force tuple.
-#    - Every nonzero speed currently returns an unavailable force result.
-#    - calculate_lift() contains L = 0.5 * density * airspeed² * area * CL,
-#      but main() does not call it: a supported CL model is still missing.
-#    - A valid AoA alone does not establish a valid lift coefficient.
-#
-# 7. PRINT THE RESULTS — report_results(), format_*(), angle_text()
-#    - Convert radians to degrees for readable angle output.
-#    - displayed is a string: 3.14159 becomes '3.14' at two decimal places.
-#    - Remove a minus sign if rounding produced text such as '-0.00'.
-#    - Printing never replaces the original numbers used by calculations.
-#    - --verbose adds aircraft/environment details and the calculation trace.
-#
-# ============================================================
+
 # B. DETAILED VARIABLE WORD BANK
 # ============================================================
 # Read entries as: variable name = meaning (units, where applicable).
@@ -603,7 +699,7 @@ if __name__ == "__main__":
 # wing_aspect_ratio = Wing span squared divided by wing area (dimensionless).
 # wing_incidence_deg = Wing mounting angle loaded from XML (degrees).
 # fuselage_length_ft / fuselage_width_ft / fuselage_height_ft
-#                   = Aircraft fuselage dimensions (ft); width/height unknown.
+#                   = Aircraft fuselage dimensions (ft); scalar width remains unknown.
 # rotor_diameter_ft = Diameter of one rotor disk (ft).
 # rotor_blades_per_hub = Number of blades attached to each rotor hub.
 # rotor_hub_positions = Supplied tilt-axis locations in FS/BL/WL datum feet;
@@ -697,68 +793,26 @@ if __name__ == "__main__":
 #                     arguments with which the program was launched.
 # verbose           = Option enabled by -v or --verbose (args.verbose).
 # ============================================================
-
-# +--------------------------------------------------------------------+
-# | C. MISSING DATA AND CURRENT ISSUES                                  |
-# +--------------------------------------------------------------------+
 #
-# C1. MISSING AIRCRAFT FIELDS — explicitly left as None in Aircraft
-#    - Rotor tilt-axis positions and exterior depth are supplied claims,
-#      loaded with citations; independent verification remains incomplete.
-#    - fuselage_width_ft stays None: exterior width is supplied as a range.
-#    - Any XML loading failure can also leave a loaded field as None.
-#    - Missing wing incidence prevents wing-frame velocity and wing AoA.
-#
-# C2. DATA NEEDED FOR SUPPORTED NONZERO WING LIFT
-#    - Numerical CL data or a verified coefficient model is missing from
-#      the current calculation path. Approximate XML descriptors do not
-#      establish a complete supported curve.
-#    - Source AoA convention, reference area, velocity definition and
-#      component scope must be checked before applying coefficient data.
-#    - Helicopter-mode nacelle/flap/flaperon settings and supported operating
-#      ranges need numeric definitions before forces can be modeled.
-#    - CD and Cm models are also missing for drag and pitching moment.
-#      They are separate requirements from a supported scalar lift model.
-#
-# C3. IMPLEMENTATION STILL NEEDED
-#    - Load aerodynamic data and evaluate coefficients within valid bounds.
-#    - Supply density, area, configuration and coefficient data to the force
-#      calculation; wing_aerodynamics() currently receives only flow.
-#    - Connect calculate_lift() to the live calculation/reporting path.
-#    - Define force directions before reporting nonzero body-axis forces.
-#    - Validate coefficient results against supported source reference cases;
-#      the current tests check kinematics and existing prototype behavior.
-#
-# C4. CURRENT MODEL LIMITS
-#    - Wind is horizontal; vertical wind is assumed zero.
-#    - Wing flow uses one reference wing with incidence only: no sweep,
-#      dihedral, panel variation, rotor wash, induced or angular-rate flow.
-#    - Rotor thrust and vertical time integration are still needed for takeoff;
-#      flight-by-wire control laws are outside the current takeoff scope.
-#    - Temperature and altitude are recorded but do not derive air density.
-#    - Aircraft geometry is loaded selectively; loaded data does not imply
-#      that a corresponding force or dynamics model exists.
-#
-# C5. RESULTS THAT CAN LOOK SURPRISING
-#    - Default stationary state + wind FROM south produces reverse flow:
-#      with the current 3° incidence, wing AoA is approximately -177°.
-#      That angle is a kinematic result, not a supported lift prediction.
-#    - Undefined AoA, missing coefficients and exactly zero freestream force
-#      are different outcomes; None must not be replaced with zero.
-#    - A tiny nonzero speed can print as 0.00 m/s and still have unavailable
-#      force. Display rounding is not a physical zero-speed test.
-#    - Zero freestream force excludes rotor wash; it is not a statement
-#      that a hovering tiltrotor has no aerodynamic loads.
-#
-# Further detail: TMPE_AERODYNAMIC_DATA_GAPS_REPORT.md at the project root.
-# +--------------------------------------------------------------------+
-# | END OF REFERENCE GUIDE                                             |
-# +--------------------------------------------------------------------+
-
-# CURRENT TAKEOFF TASK
-# 1. Establish supported rotor thrust inputs and a helicopter-mode rotor model.
-# 2. Convert loaded aircraft weight to SI and define takeoff mass/loading.
-# 3. Compare upward rotor thrust and other vertical loads with weight.
-# 4. Model ground support while grounded, then vertical motion after liftoff.
-# 5. Validate thrust and liftoff against supported reference cases.
-# Transition, airplane flight, landing and FBW are outside this task.
+# DIAGNOSTIC WORD BANK
+# diagnostics       = Dictionary mapping parameter names to load records.
+# records           = Shared diagnostic ledger passed to the XML loader.
+# row               = One load record; in matrix calculations, a matrix row.
+# name              = Python parameter name used as a diagnostic record key.
+# meaning           = Human-readable description of a parameter.
+# path              = XML element path, optionally ending in /@attribute.
+# unit / source_unit = Output units / original XML units before conversion.
+# used              = Whether a parameter is used in the live physics path.
+# citation          = Source, location and provenance metadata from XML.
+# reason            = Explanation of a load status or calculation blocker.
+# dependencies      = Input record names required by a derived field.
+# geometry_recovery = Supplied geometry items with their per-item citations.
+# LOADED            = Value parsed successfully; not proof of verification.
+# UNVERIFIED        = XML explicitly marks the supplied data as unverified.
+# MISSING           = Absent data or an intentionally unavailable value.
+# INVALID           = Malformed XML, incompatible units or invalid content.
+# CALCULATED        = A numerical physics result was produced, including zero.
+# UNAVAILABLE       = Required data or supported assumptions are missing.
+# UNSUPPORTED       = Operating condition lies outside current model support.
+# NOT IMPLEMENTED   = The calculation does not exist yet.
+# diagnostics option = --diagnostics prints the ledger and physics blockers.
