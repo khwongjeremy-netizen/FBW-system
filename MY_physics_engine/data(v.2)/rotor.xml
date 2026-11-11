@@ -79,5 +79,9 @@
     <tip_minus_root unit="deg">-47</tip_minus_root>
   </blade_twist_endpoints>
 </supplemental_rotor_geometry>
+    <prototype_thrust_model source="user-specified prototype assumption" status="derived_illustrative_unverified" location="TMPE prototype request, 2026-11-10" provenance="Illustrative hover-equilibrium assumption; not measured or verified XV-15 rotor data.">
+      <thrust_coefficient unit="1" convention="T = CT rho A (Omega R)^2">0.0102</thrust_coefficient>
+      <assumptions>Fixed CT and design hover RPM; wind, inflow response, collective control, engine power constraints, wing download, ground effect and rotor interference excluded.</assumptions>
+    </prototype_thrust_model>
   </proprotor_and_drive_system>
 </xv15_dataset>

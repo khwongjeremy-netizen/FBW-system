@@ -433,6 +433,160 @@ class IdealHoverTests(unittest.TestCase):
             self.assertIn(label, text)
 
 
+class FixedCTPrototypeTests(unittest.TestCase):
+    def setUp(self):
+        self.aircraft = tmpe.Aircraft()
+        self.environment = tmpe.Environment(windspeed=0)
+
+    def rotor(self, side='left', **kwargs):
+        return tmpe.calculate_proprotor(side, self.aircraft, self.environment,
+                                       rotor_model='prototype-fixed-ct', **kwargs)
+
+    def simulate(self, **kwargs):
+        return tmpe.simulate_takeoff(self.aircraft, self.environment,
+                                     rotor_model='prototype-fixed-ct', **kwargs)
+
+    def test_conversions_and_independent_numerical_reference(self):
+        row = self.rotor()
+        self.assertAlmostEqual(row['diameter_m'], 7.62)
+        self.assertAlmostEqual(row['radius_m'], 3.81)
+        self.assertAlmostEqual(row['angular_speed_rad_s'], 59.16666164260777)
+        self.assertAlmostEqual(row['disk_area_m2'], 45.60367311877479)
+        # Independently evaluated SI reference for CT=.0102, rho=1.225,
+        # D=7.62 m and n=565/60 revolutions/s. Not flight-test data.
+        self.assertAlmostEqual(row['value'], 28956.106644071755, places=7)
+        self.assertAlmostEqual(row['value'], 28956, delta=1)
+        self.assertNotEqual(row['disk_area_m2'], self.aircraft.rotor_disk_area_ft2 * .09290304)
+        self.assertEqual(self.aircraft.diagnostics['prototype_thrust_coefficient']['status'], 'UNVERIFIED')
+        self.assertIsNone(row['rotor_shaft_power_w'])
+        # A unit-radius disk, Omega=1 rad/s, rho=1, CT=1 -> T=pi N.
+        self.aircraft.rotor_diameter_ft = 2 / .3048
+        self.aircraft.hover_rotor_rpm = 60 / (2 * math.pi)
+        self.environment.air_density = 1
+        self.assertAlmostEqual(self.rotor(ct_override=1)['value'], math.pi)
+
+    def test_independent_sides_and_input_scaling(self):
+        left = self.rotor('left')
+        right = self.rotor('right', ct_override=.0204)
+        self.assertEqual(left['side'], 'left')
+        self.assertEqual(right['side'], 'right')
+        self.assertAlmostEqual(right['value'], 2 * left['value'])
+        self.assertEqual(self.aircraft.prototype_thrust_coefficient, .0102)
+        self.assertEqual(self.rotor('left')['value'], left['value'])
+        self.environment.air_density *= .5
+        self.assertAlmostEqual(self.rotor()['value'], left['value'] / 2)
+        self.environment.air_density *= 2
+        self.aircraft.hover_rotor_rpm *= 2
+        self.assertAlmostEqual(self.rotor()['value'], left['value'] * 4)
+        self.aircraft.rotor_diameter_ft *= 2
+        self.assertAlmostEqual(self.rotor()['value'], left['value'] * 64)
+
+    def test_baseline_near_balance_and_vertical_trajectory(self):
+        result = self.simulate(duration_s=5, timestep_s=.3)
+        balance, motion = result['balance'], result['motion']
+        self.assertAlmostEqual(balance['aircraft_weight_n'], 57826.8809983865)
+        self.assertAlmostEqual(balance['net_vertical_force_n'], 85.33228975701059)
+        self.assertLess(balance['net_vertical_force_n'] / balance['aircraft_weight_n'], .002)
+        self.assertAlmostEqual(motion['vertical_acceleration_mps2'], .014471192028650777)
+        self.assertAlmostEqual(motion['height_agl_m'], .1808899003581349)
+        self.assertAlmostEqual(motion['vertical_velocity_mps'], .0723559601432539)
+        self.assertEqual(result['elapsed_s'], 5)
+        self.assertIn('excluded', result['excluded_loads'])
+        self.assertTrue(self.aircraft.diagnostics['prototype_thrust_coefficient']['used'])
+
+    def test_ground_contact_equilibrium_and_motion_with_override(self):
+        grounded = self.simulate(ct_override=.009)
+        self.assertEqual(grounded['motion']['height_agl_m'], 0)
+        self.assertEqual(grounded['motion']['vertical_acceleration_mps2'], 0)
+        self.assertGreater(grounded['motion']['ground_support_n'], 0)
+        baseline = self.rotor()['value']
+        weight = tmpe.takeoff_mass_kg(self.aircraft.design_gross) * tmpe.G
+        equilibrium_ct = .0102 * weight / (2 * baseline)
+        hover = self.simulate(ct_override=equilibrium_ct)
+        self.assertAlmostEqual(hover['motion']['height_agl_m'], 0, places=10)
+        climb = self.simulate(ct_override=.012, duration_s=2)
+        acceleration = climb['balance']['net_vertical_force_n'] / climb['takeoff_mass_kg']
+        self.assertAlmostEqual(climb['motion']['height_agl_m'], 2 * acceleration)
+        self.assertGreater(climb['motion']['height_agl_m'], 0)
+        self.assertFalse(self.aircraft.diagnostics['prototype_thrust_coefficient']['used'])
+
+    def test_missing_and_invalid_parameters(self):
+        for obj, name, label in ((self.aircraft, 'rotor_diameter_ft', 'rotor_diameter_ft'),
+                                  (self.aircraft, 'hover_rotor_rpm', 'hover_rotor_rpm'),
+                                  (self.aircraft, 'prototype_thrust_coefficient', 'thrust_coefficient'),
+                                  (self.environment, 'air_density', 'air_density')):
+            original = getattr(obj, name)
+            for value in (None, -1, float('nan'), float('inf'), 'bad'):
+                with self.subTest(name=name, value=value):
+                    setattr(obj, name, value)
+                    row = self.rotor()
+                    self.assertIsNone(row['value'])
+                    self.assertIn(label, row['reason'])
+            setattr(obj, name, original)
+        for obj, name in ((self.aircraft, 'rotor_diameter_ft'), (self.environment, 'air_density')):
+            original = getattr(obj, name)
+            setattr(obj, name, 0)
+            self.assertEqual(self.rotor()['status'], 'UNAVAILABLE')
+            setattr(obj, name, original)
+        self.assertEqual(self.rotor(ct_override=0)['value'], 0)
+        self.aircraft.hover_rotor_rpm = 0
+        self.assertEqual(self.rotor()['value'], 0)
+
+    def test_missing_xml_ct_stops_simulation_without_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            for path in tmpe.DATA_DIR.glob('*.xml'):
+                shutil.copyfile(path, target / path.name)
+            path = target / 'rotor.xml'
+            tree = ET.parse(path)
+            section = tree.find('proprotor_and_drive_system/prototype_thrust_model')
+            section.remove(section.find('thrust_coefficient'))
+            tree.write(path)
+            with patch.object(tmpe, 'DATA_DIR', target):
+                self.aircraft = tmpe.Aircraft()
+                result = self.simulate()
+                self.assertEqual(result['elapsed_s'], 0)
+                self.assertEqual(result['motion']['takeoff_status'], 'UNAVAILABLE')
+                self.assertIn('missing thrust_coefficient', result['left']['reason'])
+                self.assertEqual(self.aircraft.diagnostics['prototype_thrust_coefficient']['status'], 'MISSING')
+                self.assertEqual(self.simulate(ct_override=.0102)['elapsed_s'], 5)
+
+    def test_default_mode_and_excluded_wind_and_power(self):
+        self.assertEqual(tmpe.calculate_proprotor('left', self.aircraft, self.environment)['status'], 'UNAVAILABLE')
+        self.assertEqual(tmpe.simulate_takeoff(self.aircraft, self.environment)['elapsed_s'], 0)
+        self.aircraft.engine_takeoff_shp = None
+        self.assertEqual(self.rotor()['status'], 'CALCULATED')
+        reference = self.simulate()
+        self.environment.windspeed = 50
+        self.assertEqual(self.simulate()['motion'], reference['motion'])
+        self.aircraft.nacelle_angle_deg = 45
+        tilted = self.simulate()
+        self.assertEqual(tilted['motion']['status'], 'UNSUPPORTED')
+        self.assertAlmostEqual(tilted['balance']['total_rotor_vertical_force_n'],
+                               2 * self.rotor()['value'] * math.sin(math.pi / 4))
+        with self.assertRaises(ValueError):
+            self.rotor('middle')
+        with self.assertRaises(ValueError):
+            tmpe.simulate_takeoff(self.aircraft, self.environment, ct_override=.01)
+        with self.assertRaises(ValueError):
+            self.simulate(force_provider=lambda *args: {})
+
+    def test_cli_labels_and_override_validation(self):
+        output = io.StringIO()
+        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+            tmpe.main(['--rotor-model', 'prototype-fixed-ct', '--prototype-ct', '.009', '--diagnostics'])
+        text = output.getvalue()
+        self.assertIn(tmpe.PROTOTYPE_LABEL, text)
+        self.assertIn('explicit CT override assumption', text)
+        self.assertIn('EXCLUDED', text)
+        self.assertIn('GROUNDED', text)
+        self.assertIn('not verified XV-15', text)
+        for flags in (['--prototype-ct', '.01'],
+                      ['--rotor-model', 'prototype-fixed-ct', '--prototype-ct', 'nan']):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                tmpe.main(flags)
+
+
 class GroundStartTests(unittest.TestCase):
     def test_initial_state_is_stationary_on_ground(self):
         state = tmpe.AircraftState()

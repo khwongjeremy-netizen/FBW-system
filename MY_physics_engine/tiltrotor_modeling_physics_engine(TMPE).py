@@ -197,7 +197,7 @@ def physics_diagnostics(flow, aero):
     }
 
 
-def report_diagnostics(aircraft, flow, aero):
+def report_diagnostics(aircraft, flow, aero, takeoff_result=None):
     print('\nTMPE :: DIAGNOSTIC REPORT\nAIRCRAFT DATA')
     for name, row in aircraft.diagnostics.items():
         print(f"  {name}: {row['status']} | {row['meaning']}")
@@ -212,6 +212,9 @@ def report_diagnostics(aircraft, flow, aero):
         if row.get('citation'):
             print('    Citation: ' + '; '.join(f'{key}={value}' for key, value in row['citation'].items()))
     results = physics_diagnostics(flow, aero)
+    if takeoff_result is not None and takeoff_result.get('rotor_model') == 'prototype-fixed-ct':
+        ready = all(takeoff_result[side]['value'] is not None for side in ('left', 'right'))
+        results['Rotor thrust'] = ('CALCULATED' if ready else 'UNAVAILABLE', PROTOTYPE_LABEL + '; see primary rotor results and assumptions')
     print('\nPHYSICS')
     for name, (status, reason) in results.items():
         print(f'  {name}: {status} — {reason}')
@@ -245,6 +248,7 @@ class Aircraft:
             value = load_parameter(self.diagnostics, name, filename, path, unit, meaning, used=used)
             setattr(self, name, value)
         for name, filename, path, unit, meaning in (
+            ('prototype_thrust_coefficient', 'rotor.xml', 'proprotor_and_drive_system/prototype_thrust_model/thrust_coefficient', '1', 'Derived illustrative hover-equilibrium CT assumption; not verified XV-15 data'),
             ('engine_takeoff_shp', 'engine.xml', "engine_data/power_rating[@name='takeoff']", 'SHP', 'Per-engine rated takeoff power; not mast power'),
             ('hover_rotor_rpm', 'rotor.xml', "proprotor_and_drive_system/design_rotor_speed[@mode='hover']", 'rpm', 'Design hover rotor speed; not commanded RPM'),
             ('transmission_efficiency', 'relationships.xml', "reported_relationships/relationship[@name='transmission_efficiency']/efficiency", '1', 'Reported mast/engine power ratio; conditional applicability'),
@@ -617,15 +621,22 @@ def rotor_force_body_n(thrust_n, nacelle_angle_deg):
     return (thrust_n * math.cos(angle), 0.0, -thrust_n * math.sin(angle))
 
 
-def calculate_proprotor(side, aircraft, environment):
+def calculate_proprotor(side, aircraft, environment, *, rotor_model='unsupported', ct_override=None):
     """Evaluate one real-rotor model's readiness; never infer thrust from rating.
 
     RPM, diameter and engine rating do not establish collective, mast power or
-    CT/CQ. A hover momentum estimate also needs explicit induced-power input
+    CT/CQ. The opt-in fixed-CT path is an illustrative force assumption.
+    A hover momentum estimate also needs explicit induced-power input
     and cannot be reused as a climb/ground-effect thrust law.
     """
     if side not in ('left', 'right'):
         raise ValueError('Proprotor side must be left or right')
+    if rotor_model == 'prototype-fixed-ct':
+        return calculate_fixed_ct_proprotor(side, aircraft, environment, ct_override=ct_override)
+    if rotor_model != 'unsupported':
+        raise ValueError(f'Unknown rotor model: {rotor_model}')
+    if ct_override is not None:
+        raise ValueError('CT override requires prototype-fixed-ct mode')
     missing = []
     for label, value in (('rotor diameter', aircraft.rotor_diameter_ft),
                          ('hover RPM', aircraft.hover_rotor_rpm),
@@ -642,6 +653,55 @@ def calculate_proprotor(side, aircraft, environment):
     result.update(side=side, rotor_shaft_power_w=None,
                   model='XV-15 thrust model unavailable; ideal hover estimate not substituted',
                   source='rotor.xml: proprotor_and_drive_system; engine.xml: engine_data; relationships.xml: transmission_efficiency')
+    return result
+
+
+PROTOTYPE_LABEL = 'PROTOTYPE ESTIMATE — FIXED CT, FIXED RPM'
+PROTOTYPE_EXCLUSIONS = ('Wing download, ground effect, rotor interference and other aerodynamic loads '
+                        'are excluded from this force balance, not established as physically zero. '
+                        'Entered wind is excluded from rotor thrust and motion; no windy-hover claim. '
+                        'Fixed CT/RPM do not respond to collective, inflow, climb speed or active control. '
+                        'No realistic climb performance or engine power demand is predicted.')
+
+
+def calculate_fixed_ct_proprotor(side, aircraft, environment, *, ct_override=None):
+    """One independent rotor evaluation in the rotorcraft CT convention.
+
+    D_m = D_ft * 0.3048; R = D_m/2; A = pi R²; Omega = RPM*2*pi/60.
+    T = CT rho A (Omega R)². No engine/shaft/induced power is inferred.
+    """
+    if side not in ('left', 'right'):
+        raise ValueError('Proprotor side must be left or right')
+    ct = aircraft.prototype_thrust_coefficient if ct_override is None else ct_override
+    inputs = dict(rotor_diameter_ft=aircraft.rotor_diameter_ft,
+                  hover_rotor_rpm=aircraft.hover_rotor_rpm,
+                  air_density=environment.air_density, thrust_coefficient=ct)
+    metadata = dict(side=side, model='prototype-fixed-ct', label=PROTOTYPE_LABEL,
+                    source_status='ASSUMPTION — derived illustrative, not measured or verified XV-15 data',
+                    source=('explicit CT override assumption' if ct_override is not None else
+                            'rotor.xml: proprotor_and_drive_system/prototype_thrust_model/thrust_coefficient'),
+                    assumptions=PROTOTYPE_EXCLUSIONS, inputs=inputs,
+                    engine_power_w=None, rotor_shaft_power_w=None, induced_power_w=None)
+    errors = []
+    for name, value in inputs.items():
+        if value is None:
+            errors.append(f'missing {name}')
+        elif not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0 or (
+                name in ('rotor_diameter_ft', 'air_density') and value == 0):
+            errors.append(f'invalid {name}: {value!r}')
+    if errors:
+        return dict(unavailable(f"{side}: " + '; '.join(errors)), **metadata)
+    try:
+        diameter = inputs['rotor_diameter_ft'] * .3048
+        radius = diameter / 2
+        area = math.pi * radius**2
+        omega = inputs['hover_rotor_rpm'] * (2 * math.pi / 60)
+        thrust = ct * inputs['air_density'] * area * (omega * radius)**2
+        result = calculated(thrust, 'T = CT rho A (Omega R)^2; ' + PROTOTYPE_LABEL)
+    except (OverflowError, ValueError):
+        return dict(unavailable(f'{side}: nonfinite derived thrust from supplied inputs'), **metadata)
+    result.update(metadata, diameter_m=diameter, radius_m=radius, disk_area_m2=area,
+                  angular_speed_rad_s=omega, thrust_coefficient=ct)
     return result
 
 
@@ -782,24 +842,37 @@ def integrate_vertical(height_agl_m, vertical_velocity_mps, mass_kg, net_vertica
     return result
 
 
-def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force_provider=None):
+def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force_provider=None,
+                     *, rotor_model='unsupported', ct_override=None):
     """Run vertical-only motion; a supplied provider must establish forces each step.
 
     Provider(time, height, upward_velocity) returns left/right thrust and explicit
     other_vertical_force_n in SI. It is an extension point, not aircraft data.
     Default XV-15 execution stops at the first unsupported force evaluation.
+    Prototype mode holds XML RPM and selected CT fixed, excluding other loads
+    and wind explicitly; density is the scenario input throughout the run.
     """
     require_finite('Duration', duration_s, 0)
     require_finite('Timestep', timestep_s, 0)
     if timestep_s == 0:
         raise ValueError('Timestep must be positive')
+    if rotor_model not in ('unsupported', 'prototype-fixed-ct'):
+        raise ValueError(f'Unknown rotor model: {rotor_model}')
+    if ct_override is not None and rotor_model != 'prototype-fixed-ct':
+        raise ValueError('CT override requires prototype-fixed-ct mode')
+    if force_provider is not None and rotor_model == 'prototype-fixed-ct':
+        raise ValueError('Choose prototype-fixed-ct or an external force provider')
+    for name in ('rotor_diameter_ft', 'hover_rotor_rpm', 'prototype_thrust_coefficient'):
+        aircraft.diagnostics[name]['used'] = (rotor_model == 'prototype-fixed-ct' and
+            (name != 'prototype_thrust_coefficient' or ct_override is None))
     mass = takeoff_mass_kg(aircraft.design_gross)
     time, height, velocity = 0.0, 0.0, 0.0
     history = []
-    left = calculate_proprotor('left', aircraft, environment)
-    right = calculate_proprotor('right', aircraft, environment)
+    left = calculate_proprotor('left', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
+    right = calculate_proprotor('right', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
     while True:
-        other = None
+        # Algebraic zero implements explicit exclusions; it is not measured zero load.
+        other = 0.0 if rotor_model == 'prototype-fixed-ct' else None
         if force_provider is not None:
             forces = force_provider(time, height, velocity)
             left = calculated(forces['left_proprotor_thrust_n'], 'Explicit external force provider; not validated XV-15 data')
@@ -828,11 +901,20 @@ def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force
     return dict(left=left, right=right, balance=balance, motion=motion,
                 left_proprotor_thrust_n=left['value'], right_proprotor_thrust_n=right['value'],
                 takeoff_mass_kg=mass, elapsed_s=time, history=history,
-                other_vertical_force_n=other, nacelle_angle_deg=aircraft.nacelle_angle_deg)
+                other_vertical_force_n=other, nacelle_angle_deg=aircraft.nacelle_angle_deg,
+                rotor_model=rotor_model, excluded_loads=PROTOTYPE_EXCLUSIONS if rotor_model == 'prototype-fixed-ct' else None)
 
 
 def report_takeoff(result):
     balance, motion = result['balance'], result['motion']
+    if result.get('rotor_model') == 'prototype-fixed-ct':
+        print('\n' + PROTOTYPE_LABEL)
+        print('Model: prototype-fixed-ct; CT source status: illustrative assumption, not verified XV-15 data.')
+        print(PROTOTYPE_EXCLUSIONS)
+        for side in ('left', 'right'):
+            row = result[side]
+            print(f"{side}: {row['source']} | {row['reason']}")
+            print(f"  Inputs: {row['inputs']}")
     print('\n--- Rotor performance ---')
     for label, value in (('LEFT PROPROTOR', result['left']['value']),
                          ('RIGHT PROPROTOR', result['right']['value']),
@@ -848,6 +930,11 @@ def report_takeoff(result):
         ('HEIGHT ABOVE GROUND', motion['height_agl_m'], 'm'),
     ):
         print(f'{label:<23}: {format_quantity(value, unit, reason="force balance unavailable")}')
+    if result.get('rotor_model') == 'prototype-fixed-ct' and balance.get('net_vertical_force_n') is not None:
+        margin_percent = 100 * balance['net_vertical_force_n'] / balance['aircraft_weight_n']
+        print(f'Prototype force excess / weight: {margin_percent:.3f}% (excluded-load assumption).')
+        if abs(margin_percent) < 1:
+            print('Almost weight-balanced; no substantial takeoff margin. Any motion is a simplified mechanics result.')
     print(f"TAKEOFF STATUS         : {motion['takeoff_status']}")
     print(f"Simulated time         : {result['elapsed_s']:.2f} s")
     if motion['status'] != 'CALCULATED':
@@ -855,7 +942,10 @@ def report_takeoff(result):
             print('Initial state retained; takeoff not simulated. Initial velocity/height are not trajectory predictions.')
         else:
             print('Simulation stopped; last supported state retained. No motion predicted beyond this time.')
-        print('Blockers: rotor mast power, thrust performance maps and supported other vertical loads. See --diagnostics.')
+        if result.get('rotor_model') == 'prototype-fixed-ct':
+            print('Blockers: ' + '; '.join(result[key]['reason'] for key in ('left', 'right', 'balance')))
+        else:
+            print('Blockers: rotor mast power, thrust performance maps and supported other vertical loads. See --diagnostics.')
     print('Educational prototype; no validated XV-15 rotor performance model.')
 
 
@@ -864,11 +954,15 @@ def report_takeoff_diagnostics(result, verbose=False):
     for name in ('left', 'right', 'balance', 'motion'):
         row = result[name]
         print(f"  {name}: {row['status']} — {row['reason']}")
-    if result['other_vertical_force_n'] is None:
+    if result.get('rotor_model') == 'prototype-fixed-ct':
+        print('  Other vertical loads: EXCLUDED — ' + PROTOTYPE_EXCLUSIONS)
+        print('  Rotor model: ' + PROTOTYPE_LABEL)
+    elif result['other_vertical_force_n'] is None:
         print('  Other vertical loads: UNAVAILABLE — ground effect, wing download and drag not established for ground liftoff.')
     else:
         print(f"  Other vertical loads: CALCULATED — explicit force provider: {result['other_vertical_force_n']} N")
-    print('  Rotor model: NOT IMPLEMENTED — supported CT/CQ or equivalent performance map required.')
+    if result.get('rotor_model') != 'prototype-fixed-ct':
+        print('  Rotor model: NOT IMPLEMENTED — supported CT/CQ or equivalent performance map required.')
     print('  Shaft power: UNAVAILABLE — engine rating is not commanded rotor mast power; power split and operating conditions unresolved.')
     print(f'  Nacelle convention: 90° vertical, 0° forward; NASA TM-81244 printed p. 4 / PDF p. 6; {NACELLE_SOURCE}')
     if verbose:
@@ -887,7 +981,15 @@ def main(argv=None):
     parser.add_argument('--duration', type=float, default=5.0, help='requested simulation duration in seconds')
     parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
     parser.add_argument('--ideal-rated-hover', action='store_true', help='separate conditional lossless rated-power hover estimate; not XV-15 predictions')
+    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct'), default='unsupported',
+                        help='opt in to the illustrative fixed CT/RPM thrust model')
+    parser.add_argument('--prototype-ct', type=float, help='assumed CT override for both prototype rotors')
     args = parser.parse_args(argv)
+    if args.prototype_ct is not None:
+        if args.rotor_model != 'prototype-fixed-ct':
+            parser.error('--prototype-ct requires --rotor-model prototype-fixed-ct')
+        if not math.isfinite(args.prototype_ct) or args.prototype_ct < 0:
+            parser.error('--prototype-ct must be finite and nonnegative')
     if not math.isfinite(args.duration) or args.duration < 0 or not math.isfinite(args.dt) or args.dt <= 0:
         parser.error('duration must be finite and nonnegative; dt must be finite and positive')
     print('TMPE :: XV-15 HELICOPTER TAKEOFF')
@@ -935,7 +1037,8 @@ def main(argv=None):
         altitude=altitude
     )
 
-    result = simulate_takeoff(aircraft, environment, args.duration, args.dt)
+    result = simulate_takeoff(aircraft, environment, args.duration, args.dt,
+                              rotor_model=args.rotor_model, ct_override=args.prototype_ct)
     report_takeoff(result)
     if args.ideal_rated_hover:
         report_rated_ideal_hover(aircraft, environment)
@@ -946,7 +1049,7 @@ def main(argv=None):
         flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
         aero = wing_aerodynamics(flow)
         print('\nSECONDARY FREESTREAM DIAGNOSTICS — excluded from takeoff balance')
-        report_diagnostics(aircraft, flow, aero)
+        report_diagnostics(aircraft, flow, aero, takeoff_result=result)
     if args.verbose:
         flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
         report_details(environment, aircraft, wing_aerodynamics(flow))
@@ -1148,3 +1251,11 @@ if __name__ == "__main__":
 # height_agl_m = Height above runway (m), never MSL field elevation.
 # force_provider = Explicit external force law for integration; not aircraft reference data.
 # timestep_s = Seconds per force evaluation and constant-acceleration step.
+
+# FIXED CT PROTOTYPE WORD BANK
+# prototype_thrust_coefficient = XML illustrative CT assumption, dimensionless.
+# ct_override = Explicit experimental CT assumption for one rotor call or both CLI rotors.
+# rotor_model = unsupported (default) or opt-in prototype-fixed-ct.
+# angular_speed_rad_s = RPM * 2*pi/60, radians per second.
+# disk_area_m2 = pi * radius_m**2; precise circular area, not rounded XML area.
+# excluded_loads = Effects intentionally omitted, not measured zero physical loads.

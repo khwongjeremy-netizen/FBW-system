@@ -1,8 +1,65 @@
 # TMPE rotor thrust review and ideal hover estimate
 
+## Opt-in fixed-CT vertical-motion prototype
+
+The new `--rotor-model prototype-fixed-ct` option connects an illustrative rotor-force equation to the existing vertical-motion simulation. It is distinct from `--ideal-rated-hover`, which remains a separate static momentum-theory scenario. Default execution still has no supported real-XV-15 thrust model.
+
+The repository had no updated `prototype_thrust_model` XML section at implementation time. Only that section was added to `rotor.xml` from the user's explicit specification, leaving all other XML entries intact. Its `thrust_coefficient` is 0.0102, marked `derived_illustrative_unverified` with a user-assumption source rather than inherited aircraft-source attribution. It represents an illustrative hover-equilibrium assumption, not an independently measured or verified XV-15 coefficient. Near balance is therefore expected by construction and is not validation.
+
+`Aircraft.__init__()` loads this CT through the existing source/status ledger. Diameter, design hover RPM and scenario density reuse the existing parameters. No duplicate geometry, RPM or density fields were introduced into the dataset.
+
+For each side, `calculate_proprotor()` dispatches to `calculate_fixed_ct_proprotor()` only in prototype mode. The per-side API accepts an independent `ct_override`; the CLI override `--prototype-ct` applies the same assumed value to both rotors. Overrides are labelled assumptions and do not edit XML. The equation uses the rotorcraft convention:
+
+* D_m = D_ft × 0.3048, converting feet to metres.
+* R = D_m/2 and A = pi R², giving the precise disk area rather than the rounded XML 491 ft².
+* Omega = RPM × 2pi/60, converting revolutions per minute to radians per second.
+* T = CT rho A (Omega R)², producing newtons. CT is dimensionless; rho A (Omega R)² has units kg m/s².
+
+At CT=0.0102, D=25 ft, RPM=565, rho=1.225 kg/m³: D=7.62 m, R=3.81 m, A=45.60367311877479 m² and Omega=59.16666164260777 rad/s. Each rotor returns 28956.106644071755 N independently. Internal calculations retain full float precision; terminal force displays round to two decimals.
+
+`simulate_takeoff()` holds CT and RPM fixed for the run. Density is the fixed scenario input; separate scenarios with different density give linearly different thrust. It passes both magnitudes through the unchanged `rotor_force_body_n()` and `vertical_force_balance()` projection, then supplies net force to the unchanged `integrate_vertical()`. Simulation remains level, vertical-only, with 90-degree nacelles; other angles have force projections but are rejected for motion because horizontal dynamics are absent. External force providers remain supported separately and cannot be combined with prototype mode in one call.
+
+In prototype mode the additional-load term is algebraically zero **because those effects are excluded**, not because measured physical loads are zero. Reports and returned metadata explicitly exclude wing download, ground effect, rotor interference and other aerodynamic forces. Wind remains available to secondary freestream diagnostics but is excluded from prototype thrust and motion, even when a nonzero wind is entered. This is not a windy-hover model.
+
+Neither engine power, shaft power nor induced power is inferred from fixed CT; all remain unavailable in the rotor result. Fixed CT does not respond to collective, inflow, climb speed, blade stall or control inputs. The computed trajectory is a constant-force mechanics exercise and cannot establish realistic climb performance or engine power demand.
+
+### Baseline force balance
+
+For selected design gross weight 13000 lb, mass is 5896.70081 kg and weight is 57826.8809983865 N. With vertical rotors:
+
+| Prototype quantity | Baseline |
+| --- | ---: |
+| Left thrust | 28956.11 N |
+| Right thrust | 28956.11 N |
+| Total upward rotor force | 57912.21 N |
+| Net upward force | 85.33 N |
+| Force excess / weight | 0.147565% |
+| Upward acceleration | 0.01447119 m/s² |
+| Upward velocity at 5 s | 0.07235596 m/s |
+| Height at 5 s | 0.18088990 m |
+
+This is almost weight-balanced and does not imply a substantial takeoff margin. The small positive force permits mathematical liftoff under the exclusions. Omitted physical forces could readily change that result. Below equilibrium the existing ground support prevents downward motion through the runway; it is a unilateral contact constraint, not an aerodynamic ground-effect model.
+
+### Run and verify
+
+From the repository root:
+
+```sh
+python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' --rotor-model prototype-fixed-ct --diagnostics --duration 5 --dt 0.1
+python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' --rotor-model prototype-fixed-ct --prototype-ct 0.009
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+```
+
+Accept default density 1.225 for the baseline. Input wind is excluded explicitly; enter zero for a still-air scenario. Default operation without `--rotor-model` retains unavailable real-XV-15 thrust behavior. A CT override without prototype mode is rejected.
+
+All 42 tests pass, including eight new prototype tests covering conversions, a numerical reference and a unit-disk analytical case, independent side overrides, density/CT/RPM/diameter scaling, near-weight balance, trajectory, equilibrium and ground contact, missing XML CT, invalid values, diagnostic labels, wind exclusion and default-model separation. Positive finite diameter and density are required; finite nonnegative CT/RPM permit zero thrust. Missing/invalid rotor inputs return unavailable with their specific names, preventing motion without substituting zero. CLI overrides reject nonfinite or negative CT.
+
+For a more accurate XV-15 model, replace the assumed CT with supported thrust/torque performance dependent on collective, RPM and inflow; establish actual engine/mast power and transmission constraints; model climb/descent inflow, ground effect, rotor/wing interference and download, and wind response. Validate against relevant rotor and aircraft measurements. These changes can replace the rotor-model dispatch or supply the existing external force provider while preserving force balance and integration.
+
+
 ## Finding
 
-A conditional isolated actuator-disk hover estimate is possible from existing XML geometry and rated engine power. Actual XV-15 thrust is not determined by those inputs. `calculate_proprotor()` therefore still reports unavailable; the opt-in estimate does not feed ground-start motion. Existing vertical force balance and integration are retained and tested independently.
+A conditional isolated actuator-disk hover estimate is possible from existing XML geometry and rated engine power. Actual XV-15 thrust is not determined by those inputs. The default `calculate_proprotor()` still reports unavailable; the optional momentum estimate does not feed ground-start motion. The separate fixed-CT prototype described below does feed vertical motion when explicitly selected. Existing vertical force balance and integration are retained and tested independently.
 
 ## Existing XML inventory
 
@@ -64,6 +121,6 @@ Tests use an arbitrary 10 kg body with hypothetical equal rotor thrusts totaling
 
 Run the regular script with `--ideal-rated-hover --diagnostics` for a separately labelled conditional estimate and the existing source ledger. The regular takeoff result remains unavailable. No synthetic thrust inputs are added to aircraft XML.
 
-`ideal_hover_from_induced_power()` is independent of aircraft data. `estimate_proprotor_hover()` performs explicit per-side power bookkeeping. `calculate_proprotor()` remains the future validated aircraft-model boundary; `simulate_takeoff(force_provider=...)` accepts independently established forces at each step. A validated XV-15 rotor model can replace that provider without changing the vertical mechanics. It must establish operating pitch/RPM, thrust/torque behavior, power constraints and applicable wake/ground loads.
+`ideal_hover_from_induced_power()` is independent of aircraft data. `estimate_proprotor_hover()` performs explicit per-side power bookkeeping. `calculate_proprotor()` remains the future validated aircraft-model boundary and now dispatches the explicitly selected fixed-CT prototype; `simulate_takeoff(force_provider=...)` accepts independently established forces at each step. A validated XV-15 rotor model can replace that provider without changing the vertical mechanics. It must establish operating pitch/RPM, thrust/torque behavior, power constraints and applicable wake/ground loads.
 
 Validation: `python3 -m unittest discover -s tests -v` checks a hypothetical disk with analytic T=36 N and Pi=108 W, power identity, power scaling, unequal side powers, unavailable/invalid inputs, opt-in reporting, and vertical mechanics. No numerical result is validated against XV-15 flight or rotor-test data.

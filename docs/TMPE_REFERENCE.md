@@ -2,6 +2,8 @@
 
 See [rotor hover review](TMPE_HOVER_REVIEW.md) for the XML inventory, optional ideal estimate, power distinctions and assumptions.
 
+The explicit `--rotor-model prototype-fixed-ct` option uses the illustrative XML CT to drive vertical mechanics. See the hover review for exclusions, baseline near balance, override usage and validation. It does not establish a supported XV-15 performance model.
+
 ## Calculation sequence
 
 1. `Aircraft` loads XML mass, engine/rotor inventory, geometry, configuration and citations.
