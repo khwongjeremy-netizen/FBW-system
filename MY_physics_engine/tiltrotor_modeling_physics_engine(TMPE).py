@@ -247,6 +247,7 @@ class Aircraft:
         for name, filename, path, unit, meaning in (
             ('engine_takeoff_shp', 'engine.xml', "engine_data/power_rating[@name='takeoff']", 'SHP', 'Per-engine rated takeoff power; not mast power'),
             ('hover_rotor_rpm', 'rotor.xml', "proprotor_and_drive_system/design_rotor_speed[@mode='hover']", 'rpm', 'Design hover rotor speed; not commanded RPM'),
+            ('transmission_efficiency', 'relationships.xml', "reported_relationships/relationship[@name='transmission_efficiency']/efficiency", '1', 'Reported mast/engine power ratio; conditional applicability'),
             ('engine_count', 'aircraft.xml', 'aircraft_overview/engine_count', '1', 'Installed engine count'),
             ('rotor_disk_area_ft2', 'rotor.xml', 'proprotor_and_drive_system/rotor_disc_area_per_rotor', 'ft^2', 'Per-rotor disk area'),
         ):
@@ -644,6 +645,81 @@ def calculate_proprotor(side, aircraft, environment):
     return result
 
 
+# Mechanical horsepower: 550 ft lbf/s, expressed in SI.
+SHP_TO_W = 745.6998715822702
+
+
+def ideal_hover_from_induced_power(diameter_m, density_kg_m3, induced_power_w):
+    """Isolated uniform actuator disk in static OGE hover; never a climb law.
+
+    T = 2 rho A vi² and Pi = T vi imply T = (Pi sqrt(2 rho A))**(2/3).
+    Pi is ideal induced power, NOT engine or total rotor shaft power.
+    """
+    for name, value in (('Diameter', diameter_m), ('Density', density_kg_m3)):
+        require_finite(name, value, 0)
+        if value == 0:
+            raise ValueError(name + ' must be positive')
+    require_finite('Induced power', induced_power_w, 0)
+    area = math.pi * (diameter_m / 2)**2
+    thrust = (induced_power_w * math.sqrt(2 * density_kg_m3 * area))**(2 / 3)
+    result = calculated(thrust, 'Ideal static isolated OGE disk; T = (Pi sqrt(2 rho A))^(2/3)')
+    result.update(model='IDEAL HOVER ONLY — not an XV-15 prediction', thrust_n=thrust,
+                  disk_area_m2=area, induced_power_w=induced_power_w,
+                  induced_velocity_mps=math.sqrt(thrust / (2 * density_kg_m3 * area)))
+    return result
+
+
+def estimate_proprotor_hover(side, aircraft, environment, *, engine_power_w,
+                             transmission_efficiency, ideal_power_fraction):
+    """Explicit per-side power allocation; no implicit cross-shaft split.
+
+    ideal_power_fraction = ideal induced power / rotor shaft power (a hover
+    figure-of-merit style closure). No measured value is supplied by the XML.
+    Setting it to 1 explicitly selects a lossless rotor idealization.
+    """
+    if side not in ('left', 'right'):
+        raise ValueError('Proprotor side must be left or right')
+    inputs = (engine_power_w, transmission_efficiency, ideal_power_fraction,
+              aircraft.rotor_diameter_ft, environment.air_density)
+    if any(value is None for value in inputs):
+        result = unavailable('Explicit engine power, transmission efficiency, ideal power fraction, diameter and density required')
+        result.update(side=side, engine_power_w=engine_power_w, rotor_shaft_power_w=None,
+                      induced_power_w=None, thrust_n=None)
+        return result
+    require_finite('Engine power', engine_power_w, 0)
+    for name, value in (('Transmission efficiency', transmission_efficiency),
+                        ('Ideal power fraction', ideal_power_fraction)):
+        require_finite(name, value, 0)
+        if not 0 < value <= 1:
+            raise ValueError(name + ' must be in (0, 1]')
+    shaft = engine_power_w * transmission_efficiency
+    result = ideal_hover_from_induced_power(aircraft.rotor_diameter_ft * .3048,
+                                           environment.air_density, shaft * ideal_power_fraction)
+    result.update(side=side, engine_power_w=engine_power_w, rotor_shaft_power_w=shaft,
+                  transmission_efficiency=transmission_efficiency,
+                  ideal_power_fraction=ideal_power_fraction,
+                  assumptions='Explicit per-side engine allocation; steady still-air OGE hover; uniform incompressible disk; no swirl, profile loss model, ground effect, interference or wing download')
+    return result
+
+
+def report_rated_ideal_hover(aircraft, environment):
+    """Conditional rating-based ceiling, separated from live motion and wind."""
+    print('\nIDEAL RATED-POWER HOVER SCENARIO — NOT XV-15 PREDICTIONS')
+    print('Assume each engine supplies its XML takeoff rating to its corresponding rotor; no crossfeed or accessory deduction.')
+    print('Apply reported XML transmission efficiency conditionally; assume all mast power becomes ideal induced power (fraction = 1).')
+    print('Still-air static OGE disks; entered wind and ground contact are excluded. No takeoff trajectory is inferred.')
+    for side in ('left', 'right'):
+        rating = aircraft.engine_takeoff_shp
+        row = estimate_proprotor_hover(side, aircraft, environment,
+            engine_power_w=None if rating is None else rating * SHP_TO_W,
+            transmission_efficiency=aircraft.transmission_efficiency, ideal_power_fraction=1.0)
+        print(f"  {side}: {row['status']} | {row['reason']}")
+        for key, unit in (('engine_power_w', 'W'), ('rotor_shaft_power_w', 'W'),
+                          ('induced_power_w', 'W'), ('thrust_n', 'N')):
+            print(f"    {key}: {format_quantity(row[key], unit)}")
+    print('Equations: Pshaft = eta Pengine; Pi = fraction Pshaft; A = pi (D/2)^2; T = (Pi sqrt(2 rho A))^(2/3).')
+
+
 def vertical_force_balance(mass_kg, left_thrust_n, right_thrust_n,
                            left_angle_deg=90.0, right_angle_deg=90.0,
                            other_vertical_force_n=None):
@@ -810,6 +886,7 @@ def main(argv=None):
     parser.add_argument('--diagnostics', action='store_true', help='show XML sources and takeoff blockers')
     parser.add_argument('--duration', type=float, default=5.0, help='requested simulation duration in seconds')
     parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
+    parser.add_argument('--ideal-rated-hover', action='store_true', help='separate conditional lossless rated-power hover estimate; not XV-15 predictions')
     args = parser.parse_args(argv)
     if not math.isfinite(args.duration) or args.duration < 0 or not math.isfinite(args.dt) or args.dt <= 0:
         parser.error('duration must be finite and nonnegative; dt must be finite and positive')
@@ -860,6 +937,8 @@ def main(argv=None):
 
     result = simulate_takeoff(aircraft, environment, args.duration, args.dt)
     report_takeoff(result)
+    if args.ideal_rated_hover:
+        report_rated_ideal_hover(aircraft, environment)
     if args.diagnostics or args.verbose:
         report_takeoff_diagnostics(result, verbose=args.verbose)
     if args.diagnostics:

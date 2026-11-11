@@ -1,5 +1,7 @@
 # TMPE physics and variable reference
 
+See [rotor hover review](TMPE_HOVER_REVIEW.md) for the XML inventory, optional ideal estimate, power distinctions and assumptions.
+
 ## Calculation sequence
 
 1. `Aircraft` loads XML mass, engine/rotor inventory, geometry, configuration and citations.

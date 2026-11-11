@@ -378,6 +378,61 @@ class VerticalTakeoffTests(unittest.TestCase):
                 tmpe.simulate_takeoff(aircraft, tmpe.Environment(), duration, dt)
 
 
+class IdealHoverTests(unittest.TestCase):
+    def test_analytic_disk_and_power_identity(self):
+        # Hypothetical disk: area 2 m², rho 1, vi 3 -> T 36 N, Pi 108 W.
+        row = tmpe.ideal_hover_from_induced_power(math.sqrt(8 / math.pi), 1, 108)
+        self.assertAlmostEqual(row['value'], 36)
+        self.assertAlmostEqual(row['induced_velocity_mps'], 3)
+        self.assertAlmostEqual(row['value'] * row['induced_velocity_mps'], 108)
+        self.assertEqual(tmpe.ideal_hover_from_induced_power(2, 1, 0)['value'], 0)
+
+    def test_explicit_separate_side_power_chain(self):
+        aircraft = tmpe.Aircraft()
+        env = tmpe.Environment(windspeed=0)
+        left = tmpe.estimate_proprotor_hover('left', aircraft, env,
+            engine_power_w=1000, transmission_efficiency=.8, ideal_power_fraction=.5)
+        right = tmpe.estimate_proprotor_hover('right', aircraft, env,
+            engine_power_w=8000, transmission_efficiency=.8, ideal_power_fraction=.5)
+        self.assertEqual(left['rotor_shaft_power_w'], 800)
+        self.assertEqual(left['induced_power_w'], 400)
+        self.assertAlmostEqual(right['value'] / left['value'], 4)
+        self.assertEqual(tmpe.calculate_proprotor('left', aircraft, env)['status'], 'UNAVAILABLE')
+        self.assertAlmostEqual(aircraft.transmission_efficiency, .93)
+        self.assertEqual(aircraft.diagnostics['transmission_efficiency']['citation']['source'], 'S2')
+        missing = tmpe.estimate_proprotor_hover('left', aircraft, env,
+            engine_power_w=None, transmission_efficiency=.93, ideal_power_fraction=1)
+        self.assertIsNone(missing['thrust_n'])
+
+    def test_invalid_inputs(self):
+        for diameter, density, power in [(0, 1, 1), (1, 0, 1), (1, 1, -1),
+                                         (float('nan'), 1, 1), (1, 1, float('inf'))]:
+            with self.assertRaises(ValueError):
+                tmpe.ideal_hover_from_induced_power(diameter, density, power)
+        for eta, fraction in [(0, 1), (1.1, 1), (1, 0), (1, 1.1)]:
+            with self.assertRaises(ValueError):
+                tmpe.estimate_proprotor_hover('left', tmpe.Aircraft(), tmpe.Environment(),
+                    engine_power_w=100, transmission_efficiency=eta, ideal_power_fraction=fraction)
+
+    def test_hypothetical_vertical_balance_thresholds(self):
+        # Arbitrary 10 kg body and prescribed forces, NOT XV-15 predictions.
+        for ratio in (.8, 1, 1.2):
+            thrust = ratio * 10 * tmpe.G / 2
+            row = tmpe.vertical_force_balance(10, thrust, thrust, other_vertical_force_n=0)
+            self.assertAlmostEqual(row['net_vertical_force_n'], (ratio - 1) * 10 * tmpe.G)
+            self.assertAlmostEqual(row['vertical_acceleration_mps2'], (ratio - 1) * tmpe.G)
+
+    def test_opt_in_report_keeps_takeoff_unavailable(self):
+        output = io.StringIO()
+        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+            tmpe.main(['--ideal-rated-hover', '--diagnostics'])
+        text = output.getvalue()
+        self.assertIn('NOT XV-15 PREDICTIONS', text)
+        self.assertIn('takeoff not simulated', text)
+        for label in ('engine_power_w', 'rotor_shaft_power_w', 'induced_power_w', 'thrust_n'):
+            self.assertIn(label, text)
+
+
 class GroundStartTests(unittest.TestCase):
     def test_initial_state_is_stationary_on_ground(self):
         state = tmpe.AircraftState()

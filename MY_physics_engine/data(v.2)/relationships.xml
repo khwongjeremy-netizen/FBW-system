@@ -19,6 +19,7 @@
       
       <equation>P_rotor = eta_xmsn * P_engine; eta_xmsn = 0.93</equation>
       
+      <efficiency unit="1" status="normalized_from_reported_equation">0.93</efficiency>
       <meaning>Net power delivered to the rotor masts is reported as 93 percent of engine power.</meaning>
     </relationship>
     
