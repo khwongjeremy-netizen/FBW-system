@@ -49,5 +49,8 @@
 <source status="user_supplied_unverified" provenance="User-pasted source summary supplied 2026-11-09; primary-source fact checking deferred." id="S13" title="Fundamental Proprotor Design Considerations" report="NASA/TM-20240002116" date="2024">
   <comment>Report identity and locations transcribed from user summary. Direct URL not supplied; no independent verification performed.</comment>
 </source>
+    <source id="S14" title="The XV-15 Tilt Rotor Research Aircraft" report="NASA TM-81244 / AVRADCOM TR 80-A-15" author="Daniel C. Dugan; Ronald G. Erhart; Laurel G. Schroers" date="1980-09" url="https://ntrs.nasa.gov/api/citations/19810001546/downloads/19810001546.pdf">
+      <comment>Independently inspected text: printed p. 4 / PDF p. 6 defines 0 deg airplane and 90 deg helicopter nacelle indications. Printed p. 2 / PDF p. 4 describes design gross weight 13000 lb; supports interpreting the existing design-gross configuration as aviation gross weight, not a force value in newtons. Does not supply a rotor thrust law.</comment>
+    </source>
   </sources>
 </xv15_dataset>

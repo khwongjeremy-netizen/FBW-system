@@ -1,5 +1,24 @@
 # Maintaining and debugging TMPE
 
+## Primary takeoff path
+
+`main()` creates `Aircraft`, reads the five environmental inputs and calls
+`simulate_takeoff()`. Each rotor is checked separately by `calculate_proprotor()`.
+With the current XML data, each returns `UNAVAILABLE` because commanded mast power
+and a supported thrust/torque model are missing. Rated SHP is only inventory.
+
+`vertical_force_balance()` computes weight and, when supplied, projected rotor
+forces and other vertical loads. `integrate_vertical()` advances a known force
+balance with a constant-acceleration step and unilateral ground constraint.
+`simulate_takeoff()` accepts an explicit external force provider for future models
+and isolated mechanics tests. Missing forces preserve state and elapsed time; they
+never become zero thrust. No actual XV-15 performance has been validated.
+
+`--diagnostics` prints the XML ledger and primary/secondary blockers; `--verbose`
+adds force equations and the separately identified wing AoA trace. The AoA path
+is no longer used by the takeoff calculation.
+
+
 ## How the Python fits together
 
 - `Aircraft.__init__()` lists the ordinary fields as tuples: Python attribute, XML file, element/attribute path, expected unit, meaning and whether live physics uses it.
@@ -33,6 +52,6 @@ Lengths accept inches, feet or metres and convert to the requested unit. Dimensi
 - Physics `CALCULATED`: an existing function produced a numerical result, including exactly zero freestream force.
 - Physics `UNAVAILABLE`: required data or a supported model is missing, or AoA is undefined at insufficient chord-plane speed.
 - Physics `UNSUPPORTED`: a nonzero operating condition is outside the current forward-flow aerodynamic assumptions. A kinematic AoA can still be calculated in reverse flow.
-- Physics `NOT IMPLEMENTED`: no calculation exists for rotor thrust, vertical dynamics or takeoff.
+- Physics `NOT IMPLEMENTED`: a required model does not exist, such as the current actual XV-15 rotor performance model. Vertical mechanics is implemented, but aircraft takeoff remains unavailable until forces are established.
 
 The ledger covers fields the program attempts to load, not every research element in the XML inventory. Fields marked “not used in live physics” are data inventory or future model inputs. Approximate aerodynamic descriptors do not provide supported coefficient arrays.

@@ -30,4 +30,7 @@
       - Source S1 URL is recorded in sources.xml; the supplied table did not provide a pinpoint passage citation.
     </comment>
   </aircraft_overview>
+  <helicopter_configuration source="S14" location="printed p. 4 / PDF p. 6" status="verified_source_text">
+    <nacelle_angle unit="deg" definition="0 deg forward airplane orientation; 90 deg vertical helicopter orientation">90</nacelle_angle>
+  </helicopter_configuration>
 </xv15_dataset>

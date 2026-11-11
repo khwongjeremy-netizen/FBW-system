@@ -2,13 +2,24 @@
 
 ## Calculation sequence
 
-1. Load aircraft fields and citation metadata into `Aircraft` and its diagnostic ledger.
-2. Start on the ground at zero height AGL, stationary, level and facing north.
-3. Read the five environmental inputs; ground elevation is MSL, not aircraft height.
-4. Subtract wind in NED coordinates: `V_air = V_ground - V_wind`.
-5. Rotate air-relative velocity from NED to body, then body to wing axes.
-6. Calculate physical wing AoA with `atan2(w_wing, u_wing)` when chord-plane speed permits it.
-7. Report available freestream results; rotor thrust and takeoff motion remain unimplemented.
+1. `Aircraft` loads XML mass, engine/rotor inventory, geometry, configuration and citations.
+2. `simulate_takeoff()` selects the XML design-gross loading and checks separate rotor models.
+3. `vertical_force_balance()` projects rotor thrust upward, adds explicit other loads and subtracts weight.
+4. Missing inputs produce unavailable results and prevent time advancement.
+5. Known forces feed `integrate_vertical()`, which applies ground support and advances height/velocity.
+6. Repeat force evaluation each timestep until the requested duration.
+7. Report primary rotor/vertical results; optional secondary wing calculations are excluded from force balance.
+
+## Vertical equations and assumptions
+
+- Aviation gross weight in lb converts to kg with 0.45359237; weight in N is mass times standard gravity 9.80665 m/s².
+- Nacelle angle beta is 0° forward and 90° vertical; checked against NASA TM-81244, printed p. 4 / PDF p. 6 (source S14).
+- Rotor body force: `(T*cos(beta), 0, -T*sin(beta))`. Vertical-only simulation fixes level attitude and 90° nacelles.
+- Up positive: `F = TL*sin(betaL) + TR*sin(betaR) + Fother - m*g`; ground support is separate.
+- On the ground at rest, support cancels downward net force. Positive net force permits liftoff.
+- Each force is held constant over a step: `h_next = h + v*dt + 0.5*a*dt²`, `v_next = v + a*dt`. Ground crossings are clamped; no impact-response model is claimed.
+- No conversion from engine rating to actual rotor thrust is established. The reported transmission relation and OGE download are not applied to invent runway conditions.
+- An ideal static hover actuator disk would require explicit induced power and applicable assumptions; that does not supply the missing actual rotor or climb model.
 
 ## Frames and equations
 
@@ -33,7 +44,7 @@
 - Loaded geometry is not evidence that a corresponding dynamics model exists.
 - Supplied hub positions are conversion tilt-axis locations in aircraft FS/BL/WL datum feet (aft/right/up), not CG body coordinates.
 - Width is supplied as an exterior range, depth as a cited claim; verification remains incomplete.
-- Rotor thrust, ground support, vertical integration and takeoff validation remain future work.
+- Actual rotor performance, applicable ground/wake loads and aircraft takeoff validation remain future work. Vertical force balance and integration are implemented for explicit known forces.
 
 ## Variable dictionary
 

@@ -205,8 +205,9 @@ class DiagnosticReportTests(unittest.TestCase):
         verbose = self.run_main(['--verbose'])
         both = self.run_main(['--diagnostics', '--verbose'])
         for output in (normal, diagnostics, verbose, both):
-            self.assertRegex(output, r'Airspeed:\s+5\.00 m/s')
-            self.assertIn('Takeoff status: not simulated', output)
+            self.assertIn('LEFT PROPROTOR', output)
+            self.assertIn('AIRCRAFT WEIGHT', output)
+            self.assertIn('takeoff not simulated', output)
         self.assertNotIn('DIAGNOSTIC REPORT', normal)
         self.assertNotIn('calculation trace', normal)
         self.assertIn('DIAGNOSTIC REPORT', diagnostics)
@@ -251,6 +252,132 @@ class DiagnosticReportTests(unittest.TestCase):
         self.assertIn('geometry.xml :: geometry/wing/incidence — ValueError: invalid float', text)
 
 
+class VerticalTakeoffTests(unittest.TestCase):
+    def test_design_mass_and_weight_independent_units(self):
+        self.assertEqual(tmpe.takeoff_mass_kg(1), .45359237)
+        mass = tmpe.takeoff_mass_kg(13000)
+        self.assertAlmostEqual(mass, 5896.70081)
+        self.assertAlmostEqual(mass * tmpe.G, 13000 * 4.4482216152605)
+        self.assertIsNone(tmpe.takeoff_mass_kg(None))
+        for value in (0, -1, float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                tmpe.takeoff_mass_kg(value)
+
+    def test_left_right_models_do_not_invent_thrust_from_ratings(self):
+        aircraft = tmpe.Aircraft()
+        for side in ('left', 'right'):
+            row = tmpe.calculate_proprotor(side, aircraft, tmpe.Environment())
+            self.assertEqual(row['status'], 'UNAVAILABLE')
+            self.assertIsNone(row['value'])
+            self.assertIsNone(row['rotor_shaft_power_w'])
+            self.assertIn(side, row['reason'])
+            self.assertIn('mast power', row['reason'])
+        aircraft.engine_takeoff_shp = None
+        row = tmpe.calculate_proprotor('left', aircraft, tmpe.Environment())
+        self.assertIn('engine takeoff rating', row['reason'])
+        self.assertEqual(aircraft.nacelle_angle_deg, 90)
+        self.assertEqual(aircraft.diagnostics['nacelle_angle_deg']['citation']['source'], 'S14')
+
+    def test_rotor_vector_directions(self):
+        for angle, expected in [(0, (100, 0, 0)), (90, (0, 0, -100)),
+                                (180, (-100, 0, 0)), (45, (math.sqrt(5000), 0, -math.sqrt(5000)))]:
+            for actual, reference in zip(tmpe.rotor_force_body_n(100, angle), expected):
+                self.assertAlmostEqual(actual, reference)
+        self.assertIsNone(tmpe.rotor_force_body_n(None, 90))
+        with self.assertRaises(ValueError):
+            tmpe.rotor_force_body_n(-10, 90)
+
+    def test_force_balance_projects_each_rotor_and_other_loads(self):
+        row = tmpe.vertical_force_balance(10, 100, 200, 90, 30, -20)
+        self.assertAlmostEqual(row['total_rotor_vertical_force_n'], 200)
+        self.assertAlmostEqual(row['net_vertical_force_n'], 180 - 10 * tmpe.G)
+        self.assertAlmostEqual(row['vertical_acceleration_mps2'], 18 - tmpe.G)
+        self.assertIsNone(tmpe.vertical_force_balance(10, None, 200, other_vertical_force_n=0)['value'])
+        self.assertIsNone(tmpe.vertical_force_balance(10, 100, 200)['value'])
+
+    def test_ground_support_and_liftoff_threshold(self):
+        for net in (-100, 0):
+            row = tmpe.integrate_vertical(0, 0, 10, net, .1)
+            self.assertEqual(row['takeoff_status'], 'GROUNDED')
+            self.assertEqual(row['height_agl_m'], 0)
+            self.assertEqual(row['vertical_acceleration_mps2'], 0)
+            self.assertEqual(row['ground_support_n'], -net)
+        row = tmpe.integrate_vertical(0, 0, 10, 20, .5)
+        self.assertEqual(row['takeoff_status'], 'AIRBORNE')
+        self.assertAlmostEqual(row['height_agl_m'], .25)
+        self.assertAlmostEqual(row['vertical_velocity_mps'], 1)
+        self.assertEqual(row['ground_support_n'], 0)
+
+    def test_constant_force_trajectory_and_ground_constraint(self):
+        row = tmpe.integrate_vertical(4, 3, 10, -20, .5)
+        self.assertAlmostEqual(row['height_agl_m'], 5.25)
+        self.assertAlmostEqual(row['vertical_velocity_mps'], 2)
+        row = tmpe.integrate_vertical(.1, -2, 10, -20, 1)
+        self.assertEqual(row['height_agl_m'], 0)
+        self.assertEqual(row['vertical_velocity_mps'], 0)
+        with self.assertRaises(ValueError):
+            tmpe.integrate_vertical(0, 0, 10, 0, 0)
+
+    def test_unknown_force_does_not_advance_or_become_zero(self):
+        row = tmpe.integrate_vertical(3, 2, 10, None, .1)
+        self.assertEqual(row['height_agl_m'], 3)
+        self.assertEqual(row['vertical_velocity_mps'], 2)
+        self.assertIsNone(row['vertical_acceleration_mps2'])
+        self.assertFalse(row['advanced'])
+        result = tmpe.simulate_takeoff(tmpe.Aircraft(), tmpe.Environment())
+        self.assertEqual(result['elapsed_s'], 0)
+        self.assertEqual(result['history'], [])
+        self.assertEqual(result['motion']['takeoff_status'], 'UNAVAILABLE')
+
+    def test_time_loop_against_analytic_synthetic_force_case(self):
+        # Synthetic mechanics case; these thrusts are NOT XV-15 reference data.
+        aircraft = tmpe.Aircraft()
+        mass = tmpe.takeoff_mass_kg(aircraft.design_gross)
+        def forces(time, height, velocity):
+            thrust = mass * (tmpe.G + 2) / 2
+            return dict(left_proprotor_thrust_n=thrust, right_proprotor_thrust_n=thrust,
+                        other_vertical_force_n=0)
+        for dt in (.1, .3, 2):
+            result = tmpe.simulate_takeoff(aircraft, tmpe.Environment(), 1, dt, forces)
+            self.assertAlmostEqual(result['elapsed_s'], 1)
+            self.assertAlmostEqual(result['motion']['height_agl_m'], 1)
+            self.assertAlmostEqual(result['motion']['vertical_velocity_mps'], 2)
+        aircraft.wing_incidence_deg = None
+        result = tmpe.simulate_takeoff(aircraft, tmpe.Environment(), 1, .1, forces)
+        self.assertAlmostEqual(result['motion']['height_agl_m'], 1)
+
+    def test_missing_mass_and_unsupported_configuration(self):
+        aircraft = tmpe.Aircraft()
+        aircraft.design_gross = None
+        result = tmpe.simulate_takeoff(aircraft, tmpe.Environment())
+        self.assertIsNone(result['takeoff_mass_kg'])
+        self.assertEqual(result['elapsed_s'], 0)
+        aircraft = tmpe.Aircraft()
+        aircraft.nacelle_angle_deg = 45
+        result = tmpe.simulate_takeoff(aircraft, tmpe.Environment())
+        self.assertEqual(result['motion']['status'], 'UNSUPPORTED')
+        self.assertEqual(result['elapsed_s'], 0)
+
+    def test_loop_time_controls_and_unavailable_later_step(self):
+        aircraft = tmpe.Aircraft()
+        mass = tmpe.takeoff_mass_kg(aircraft.design_gross)
+        def forces(time, height, velocity):
+            thrust = mass * (tmpe.G + 2) / 2 if time == 0 else None
+            return dict(left_proprotor_thrust_n=thrust, right_proprotor_thrust_n=thrust,
+                        other_vertical_force_n=0)
+        result = tmpe.simulate_takeoff(aircraft, tmpe.Environment(), 1, .1, forces)
+        self.assertAlmostEqual(result['elapsed_s'], .1)
+        self.assertAlmostEqual(result['motion']['height_agl_m'], .01)
+        self.assertEqual(result['motion']['status'], 'UNAVAILABLE')
+        result = tmpe.simulate_takeoff(aircraft, tmpe.Environment(), 0, .1, forces)
+        self.assertEqual(result['elapsed_s'], 0)
+        self.assertEqual(result['motion']['height_agl_m'], 0)
+        self.assertEqual(result['motion']['takeoff_status'], 'GROUNDED')
+        for duration, dt in [(-1, .1), (1, 0), (1, float('nan'))]:
+            with self.assertRaises(ValueError):
+                tmpe.simulate_takeoff(aircraft, tmpe.Environment(), duration, dt)
+
+
 class GroundStartTests(unittest.TestCase):
     def test_initial_state_is_stationary_on_ground(self):
         state = tmpe.AircraftState()
@@ -268,10 +395,10 @@ class GroundStartTests(unittest.TestCase):
         text = output.getvalue()
         self.assertIn('helicopter-mode vertical takeoff', text)
         self.assertIn('on the ground, stationary, level, facing north', text)
-        self.assertIn('height above ground = 0.00 m', text)
+        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 0.00 m')
         self.assertIn('Ground elevation (MSL): 500.00 m', text)
         self.assertIn('Prescribed ground velocity NED: (0.00, 0.00, 0.00) m/s', text)
-        self.assertIn('Takeoff status: not simulated', text)
+        self.assertIn('takeoff not simulated', text)
 
 
 if __name__ == '__main__':

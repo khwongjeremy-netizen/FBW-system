@@ -4,7 +4,7 @@
 #
 # This is an educational prototype, NOT a validated flight simulator.
 # Scope: rotor lift generation and vertical takeoff from the ground.
-# Rotor thrust and vertical motion are not implemented yet.
+# Rotor performance data is incomplete; vertical dynamics require known forces.
 # ============================================================
 
 # ============================================================
@@ -193,9 +193,7 @@ def physics_diagnostics(flow, aero):
         'Wing freestream force': ('CALCULATED' if force is not None else 'UNSUPPORTED' if unsupported else 'UNAVAILABLE', aero['status']),
         'Wing lift': ('CALCULATED' if force == (0.0, 0.0, 0.0) else 'UNSUPPORTED' if unsupported else 'UNAVAILABLE',
                       '0.00 N; zero freestream only, rotor wash excluded.' if force == (0.0, 0.0, 0.0) else aero['status']),
-        'Rotor thrust': ('NOT IMPLEMENTED', 'No rotor thrust calculation exists.'),
-        'Vertical dynamics': ('NOT IMPLEMENTED', 'No ground support or vertical motion integration exists.'),
-        'Helicopter takeoff': ('NOT IMPLEMENTED', 'Rotor thrust and vertical dynamics are not implemented.'),
+        'Rotor thrust': ('NOT IMPLEMENTED', 'Supported XV-15 performance map missing; see primary takeoff diagnostics.'),
     }
 
 
@@ -233,7 +231,7 @@ class Aircraft:
         self.diagnostics = {}
         # name, XML file/path, expected unit, meaning, used in live physics
         specs = (
-            ('design_gross', 'mass.xml', ".//*[@name='design_gross']", 'lb', 'Design gross weight', False),
+            ('design_gross', 'mass.xml', ".//*[@name='design_gross']", 'lb', 'Selected design-gross takeoff weight', True),
             ('wing_span_ft', 'geometry.xml', 'geometry/wing/span', 'ft', 'Wing span', False),
             ('wing_area_ft2', 'geometry.xml', 'geometry/wing/area', 'ft^2', 'Wing reference area', False),
             ('wing_chord_ft', 'geometry.xml', 'geometry/wing/chord', 'ft', 'Wing chord', False),
@@ -246,6 +244,22 @@ class Aircraft:
         for name, filename, path, unit, meaning, used in specs:
             value = load_parameter(self.diagnostics, name, filename, path, unit, meaning, used=used)
             setattr(self, name, value)
+        for name, filename, path, unit, meaning in (
+            ('engine_takeoff_shp', 'engine.xml', "engine_data/power_rating[@name='takeoff']", 'SHP', 'Per-engine rated takeoff power; not mast power'),
+            ('hover_rotor_rpm', 'rotor.xml', "proprotor_and_drive_system/design_rotor_speed[@mode='hover']", 'rpm', 'Design hover rotor speed; not commanded RPM'),
+            ('engine_count', 'aircraft.xml', 'aircraft_overview/engine_count', '1', 'Installed engine count'),
+            ('rotor_disk_area_ft2', 'rotor.xml', 'proprotor_and_drive_system/rotor_disc_area_per_rotor', 'ft^2', 'Per-rotor disk area'),
+        ):
+            setattr(self, name, load_parameter(self.diagnostics, name, filename, path, unit, meaning))
+        self.nacelle_angle_deg = load_parameter(self.diagnostics, 'nacelle_angle_deg',
+            'aircraft.xml', 'helicopter_configuration/nacelle_angle', 'deg',
+            'Helicopter nacelle angle; 0 forward / 90 vertical', used=True)
+        self.transmission_relationship = load_parameter(self.diagnostics, 'transmission_relationship',
+            'relationships.xml', "reported_relationships/relationship[@name='transmission_efficiency']/equation",
+            'text', 'Reported efficiency relationship; applicability not established', text=True)
+        if self.design_gross is not None and self.design_gross <= 0:
+            self.design_gross = None
+            self.diagnostics['design_gross'].update(value=None, status='INVALID', reason='Selected gross weight must be positive.')
         self.geometry_recovery = load_recovery_items(self.diagnostics)
         self.rotor_hub_positions_frame = 'aircraft datum FS/BL/WL, ft; aft/right/up'
         self.rotor_hub_positions = self._recovered_group('rotor_hub_positions', {
@@ -556,22 +570,255 @@ def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
 
 
 
+# Nacelle convention independently checked in NASA TM-81244, printed p. 4 / PDF p. 6.
+NACELLE_SOURCE = 'https://ntrs.nasa.gov/api/citations/19810001546/downloads/19810001546.pdf'
+LB_TO_KG = 0.45359237
+
+
+def calculated(value, reason):
+    if value is None:
+        return unavailable('Explicit force provider returned unavailable data; ' + reason)
+    if not math.isfinite(value):
+        raise ValueError('Calculated values must be finite')
+    return dict(value=value, status='CALCULATED', reason=reason)
+
+
+def unavailable(reason, status='UNAVAILABLE'):
+    return dict(value=None, status=status, reason=reason)
+
+
+def require_finite(name, value, minimum=None):
+    if not math.isfinite(value) or (minimum is not None and value < minimum):
+        raise ValueError(f'{name} must be finite' + (f' and at least {minimum}' if minimum is not None else ''))
+
+
+def takeoff_mass_kg(gross_weight_lb):
+    """Aviation gross weight in lb corresponds to lbm at standard gravity.
+
+    Equivalently W_N = W_lbf * 4.4482216152605 and m = W_N / G.
+    This selects the XML design-gross configuration, not measured loading.
+    """
+    if gross_weight_lb is None:
+        return None
+    require_finite('Gross weight', gross_weight_lb, 0)
+    if gross_weight_lb == 0:
+        raise ValueError('Takeoff mass must be positive')
+    return gross_weight_lb * LB_TO_KG
+
+
+def rotor_force_body_n(thrust_n, nacelle_angle_deg):
+    """Rotor-axis thrust: nacelle 0° forward, 90° up; body z is down."""
+    if thrust_n is None or nacelle_angle_deg is None:
+        return None
+    require_finite('Thrust', thrust_n, 0)
+    require_finite('Nacelle angle', nacelle_angle_deg)
+    angle = math.radians(nacelle_angle_deg)
+    return (thrust_n * math.cos(angle), 0.0, -thrust_n * math.sin(angle))
+
+
+def calculate_proprotor(side, aircraft, environment):
+    """Evaluate one real-rotor model's readiness; never infer thrust from rating.
+
+    RPM, diameter and engine rating do not establish collective, mast power or
+    CT/CQ. A hover momentum estimate also needs explicit induced-power input
+    and cannot be reused as a climb/ground-effect thrust law.
+    """
+    if side not in ('left', 'right'):
+        raise ValueError('Proprotor side must be left or right')
+    missing = []
+    for label, value in (('rotor diameter', aircraft.rotor_diameter_ft),
+                         ('hover RPM', aircraft.hover_rotor_rpm),
+                         ('engine takeoff rating', aircraft.engine_takeoff_shp)):
+        if value is None:
+            missing.append(label)
+        elif not math.isfinite(value) or value <= 0:
+            return unavailable(f'{side}: invalid {label}')
+    if not math.isfinite(environment.air_density) or environment.air_density <= 0:
+        return unavailable(f'{side}: positive finite air density required')
+    missing.extend((f'{side} commanded/available rotor mast power',
+                    f'{side} collective and supported thrust/torque performance map'))
+    result = unavailable('; '.join(missing))
+    result.update(side=side, rotor_shaft_power_w=None,
+                  model='XV-15 thrust model unavailable; ideal hover estimate not substituted',
+                  source='rotor.xml: proprotor_and_drive_system; engine.xml: engine_data; relationships.xml: transmission_efficiency')
+    return result
+
+
+def vertical_force_balance(mass_kg, left_thrust_n, right_thrust_n,
+                           left_angle_deg=90.0, right_angle_deg=90.0,
+                           other_vertical_force_n=None):
+    """Up positive. Other loads must be supplied explicitly, including exclusions."""
+    if mass_kg is None:
+        return unavailable('Selected takeoff mass missing: mass.xml design_gross')
+    require_finite('Mass', mass_kg, 0)
+    if mass_kg == 0:
+        raise ValueError('Mass must be positive')
+    weight = mass_kg * G
+    left = rotor_force_body_n(left_thrust_n, left_angle_deg)
+    right = rotor_force_body_n(right_thrust_n, right_angle_deg)
+    rotor_up = None if left is None or right is None else -left[2] - right[2]
+    if left is None or right is None or other_vertical_force_n is None:
+        result = unavailable('Both rotor thrusts, nacelle angles and explicit other vertical loads are required')
+        result.update(aircraft_weight_n=weight, total_rotor_vertical_force_n=rotor_up,
+                      net_vertical_force_n=None, vertical_acceleration_mps2=None)
+        return result
+    require_finite('Other vertical force', other_vertical_force_n)
+    net = rotor_up + other_vertical_force_n - weight
+    result = calculated(net, 'F_up = T_L sin(beta_L) + T_R sin(beta_R) + F_other - m g; a = F_up / m')
+    result.update(aircraft_weight_n=weight, total_rotor_vertical_force_n=rotor_up,
+                  net_vertical_force_n=net, vertical_acceleration_mps2=net / mass_kg)
+    return result
+
+
+def integrate_vertical(height_agl_m, vertical_velocity_mps, mass_kg, net_vertical_force_n, timestep_s):
+    """Exact constant-force step; forces must be reevaluated each timestep.
+
+    Unilateral ground constraint: support cancels negative force while at rest.
+    Any ground crossing is arrested at ground level with zero downward velocity.
+    This contact constraint is not a landing or impact-response model.
+    """
+    for name, value in (('Height', height_agl_m), ('Velocity', vertical_velocity_mps),
+                        ('Timestep', timestep_s)):
+        require_finite(name, value)
+    if height_agl_m < 0 or timestep_s <= 0:
+        raise ValueError('Height must be nonnegative and timestep positive')
+    if mass_kg is None or net_vertical_force_n is None:
+        result = unavailable('Motion not advanced: mass or net vertical force unavailable')
+        result.update(height_agl_m=height_agl_m, vertical_velocity_mps=vertical_velocity_mps,
+                      vertical_acceleration_mps2=None, ground_support_n=None, takeoff_status='UNAVAILABLE', advanced=False)
+        return result
+    require_finite('Mass', mass_kg, 0)
+    require_finite('Net force', net_vertical_force_n)
+    if mass_kg == 0:
+        raise ValueError('Mass must be positive')
+    grounded = height_agl_m == 0 and vertical_velocity_mps <= 0
+    support = max(0.0, -net_vertical_force_n) if grounded else 0.0
+    acceleration = (net_vertical_force_n + support) / mass_kg
+    velocity = max(0.0, vertical_velocity_mps) if grounded else vertical_velocity_mps
+    height = height_agl_m + velocity * timestep_s + .5 * acceleration * timestep_s**2
+    velocity += acceleration * timestep_s
+    if height <= 0:
+        height, velocity = 0.0, 0.0
+    result = calculated(height, 'h_new = h + v dt + 0.5 a dt²; v_new = v + a dt; unilateral ground support')
+    result.update(height_agl_m=height, vertical_velocity_mps=velocity,
+                  vertical_acceleration_mps2=acceleration, ground_support_n=support,
+                  takeoff_status='AIRBORNE' if height > 0 else 'GROUNDED', advanced=True)
+    return result
+
+
+def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force_provider=None):
+    """Run vertical-only motion; a supplied provider must establish forces each step.
+
+    Provider(time, height, upward_velocity) returns left/right thrust and explicit
+    other_vertical_force_n in SI. It is an extension point, not aircraft data.
+    Default XV-15 execution stops at the first unsupported force evaluation.
+    """
+    require_finite('Duration', duration_s, 0)
+    require_finite('Timestep', timestep_s, 0)
+    if timestep_s == 0:
+        raise ValueError('Timestep must be positive')
+    mass = takeoff_mass_kg(aircraft.design_gross)
+    time, height, velocity = 0.0, 0.0, 0.0
+    history = []
+    left = calculate_proprotor('left', aircraft, environment)
+    right = calculate_proprotor('right', aircraft, environment)
+    while True:
+        other = None
+        if force_provider is not None:
+            forces = force_provider(time, height, velocity)
+            left = calculated(forces['left_proprotor_thrust_n'], 'Explicit external force provider; not validated XV-15 data')
+            right = calculated(forces['right_proprotor_thrust_n'], 'Explicit external force provider; not validated XV-15 data')
+            other = forces['other_vertical_force_n']
+        balance = vertical_force_balance(mass, left['value'], right['value'],
+                                         aircraft.nacelle_angle_deg, aircraft.nacelle_angle_deg, other)
+        if aircraft.nacelle_angle_deg is not None and aircraft.nacelle_angle_deg != 90:
+            balance.update(value=None, status='UNSUPPORTED', net_vertical_force_n=None,
+                           vertical_acceleration_mps2=None,
+                           reason='Vertical-only simulation requires the 90 degree helicopter configuration; horizontal force/attitude dynamics excluded.')
+        dt = min(timestep_s, max(0.0, duration_s - time))
+        motion = integrate_vertical(height, velocity, mass, balance.get('net_vertical_force_n'), dt or timestep_s)
+        if dt == 0 and motion['advanced']:
+            motion.update(height_agl_m=height, vertical_velocity_mps=velocity, advanced=False,
+                          takeoff_status='AIRBORNE' if height > 0 else 'GROUNDED')
+        if balance['status'] == 'UNSUPPORTED':
+            motion.update(status='UNSUPPORTED', reason=balance['reason'])
+        if motion['status'] != 'CALCULATED' or dt == 0:
+            break
+        time += dt
+        height, velocity = motion['height_agl_m'], motion['vertical_velocity_mps']
+        history.append(dict(time_s=time, **motion))
+        if time >= duration_s:
+            break
+    return dict(left=left, right=right, balance=balance, motion=motion,
+                left_proprotor_thrust_n=left['value'], right_proprotor_thrust_n=right['value'],
+                takeoff_mass_kg=mass, elapsed_s=time, history=history,
+                other_vertical_force_n=other, nacelle_angle_deg=aircraft.nacelle_angle_deg)
+
+
+def report_takeoff(result):
+    balance, motion = result['balance'], result['motion']
+    print('\n--- Rotor performance ---')
+    for label, value in (('LEFT PROPROTOR', result['left']['value']),
+                         ('RIGHT PROPROTOR', result['right']['value']),
+                         ('TOTAL VERTICAL', balance.get('total_rotor_vertical_force_n'))):
+        print(f'{label:<23}: {format_quantity(value, "N", reason="rotor model inputs missing")}')
+    print('\n--- Aircraft response (up positive) ---')
+    for label, value, unit in (
+        ('TAKEOFF MASS', result['takeoff_mass_kg'], 'kg'),
+        ('AIRCRAFT WEIGHT', balance.get('aircraft_weight_n'), 'N'),
+        ('NET VERTICAL FORCE', balance.get('net_vertical_force_n'), 'N'),
+        ('VERTICAL ACCEL.', motion['vertical_acceleration_mps2'], 'm/s²'),
+        ('VERTICAL VELOCITY', motion['vertical_velocity_mps'], 'm/s'),
+        ('HEIGHT ABOVE GROUND', motion['height_agl_m'], 'm'),
+    ):
+        print(f'{label:<23}: {format_quantity(value, unit, reason="force balance unavailable")}')
+    print(f"TAKEOFF STATUS         : {motion['takeoff_status']}")
+    print(f"Simulated time         : {result['elapsed_s']:.2f} s")
+    if motion['status'] != 'CALCULATED':
+        if result['elapsed_s'] == 0:
+            print('Initial state retained; takeoff not simulated. Initial velocity/height are not trajectory predictions.')
+        else:
+            print('Simulation stopped; last supported state retained. No motion predicted beyond this time.')
+        print('Blockers: rotor mast power, thrust performance maps and supported other vertical loads. See --diagnostics.')
+    print('Educational prototype; no validated XV-15 rotor performance model.')
+
+
+def report_takeoff_diagnostics(result, verbose=False):
+    print('\nTAKEOFF PHYSICS')
+    for name in ('left', 'right', 'balance', 'motion'):
+        row = result[name]
+        print(f"  {name}: {row['status']} — {row['reason']}")
+    if result['other_vertical_force_n'] is None:
+        print('  Other vertical loads: UNAVAILABLE — ground effect, wing download and drag not established for ground liftoff.')
+    else:
+        print(f"  Other vertical loads: CALCULATED — explicit force provider: {result['other_vertical_force_n']} N")
+    print('  Rotor model: NOT IMPLEMENTED — supported CT/CQ or equivalent performance map required.')
+    print('  Shaft power: UNAVAILABLE — engine rating is not commanded rotor mast power; power split and operating conditions unresolved.')
+    print(f'  Nacelle convention: 90° vertical, 0° forward; NASA TM-81244 printed p. 4 / PDF p. 6; {NACELLE_SOURCE}')
+    if verbose:
+        print('  Selected loading: XML design_gross lb × 0.45359237 = mass kg; weight = mass × 9.80665 N.')
+        print('  Thrust body vector = (T cos(beta), 0, -T sin(beta)); level aircraft, vertical translation only.')
+        print('  F_net,up = T_L sin(beta_L) + T_R sin(beta_R) + F_other,up - m g.')
+        print('  Ground support = max(0, -F_net,up) while grounded and stationary.')
+        print('  Constant-force integration: h += v dt + 0.5 a dt²; v += a dt; clamp ground crossings.')
+        print('  No OGE 7% download or reported 93% efficiency is silently applied to runway liftoff.')
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="TMPE — Tiltrotor Modeling Physics Engine")
-    parser.add_argument('-v', '--verbose', action='store_true',
-                        help="show aircraft data and the complete AoA calculation trace")
-    parser.add_argument('--diagnostics', action='store_true',
-                        help='show parameter sources, load failures and physics blockers')
+    parser = argparse.ArgumentParser(description='TMPE :: XV-15 HELICOPTER TAKEOFF')
+    parser.add_argument('-v', '--verbose', action='store_true', help='show force equations and secondary AoA trace')
+    parser.add_argument('--diagnostics', action='store_true', help='show XML sources and takeoff blockers')
+    parser.add_argument('--duration', type=float, default=5.0, help='requested simulation duration in seconds')
+    parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
     args = parser.parse_args(argv)
-    print("\nTMPE — Tiltrotor Modeling Physics Engine")
-
+    if not math.isfinite(args.duration) or args.duration < 0 or not math.isfinite(args.dt) or args.dt <= 0:
+        parser.error('duration must be finite and nonnegative; dt must be finite and positive')
+    print('TMPE :: XV-15 HELICOPTER TAKEOFF')
     aircraft = Aircraft()
-
     state = AircraftState()
-    print("Scenario: XV-15 helicopter-mode vertical takeoff.")
-    print("Initial state: on the ground, stationary, level, facing north.")
-    print("Scope: generate rotor lift and rise vertically from the ground.")
-
+    print('Scenario: XV-15 helicopter-mode vertical takeoff.')
+    print('Initial state: on the ground, stationary, level, facing north.')
+    print('MODE: HELICOPTER; nacelle angle:', format_quantity(aircraft.nacelle_angle_deg, '°', 1))
     print("\nEnter ground-level environmental conditions.")
 
     density = ask_float(
@@ -611,24 +858,19 @@ def main(argv=None):
         altitude=altitude
     )
 
-    flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
-    aero = wing_aerodynamics(flow)
-
-    report_results(flow, aero)
-    print("\nTakeoff status: not simulated — rotor thrust and vertical motion model missing.")
-    print(f"Aircraft remains at its initial ground state; height above ground = {format_number(state.height_agl_m)} m.")
-    print("Wing results describe freestream airflow only; they do not determine rotor lift or liftoff.")
-    print("Educational prototype; not a validated flight simulator.")
+    result = simulate_takeoff(aircraft, environment, args.duration, args.dt)
+    report_takeoff(result)
+    if args.diagnostics or args.verbose:
+        report_takeoff_diagnostics(result, verbose=args.verbose)
     if args.diagnostics:
+        # Preserve the XML ledger and explicitly separate secondary freestream work.
+        flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
+        aero = wing_aerodynamics(flow)
+        print('\nSECONDARY FREESTREAM DIAGNOSTICS — excluded from takeoff balance')
         report_diagnostics(aircraft, flow, aero)
-    elif not args.verbose:
-        failures = sum(row['status'] in ('MISSING', 'INVALID')
-                       and not row['reason'].startswith('Intentionally')
-                       for row in aircraft.diagnostics.values())
-        if failures:
-            print(f'Data loading issues: {failures}; use --diagnostics for source paths and reasons.')
     if args.verbose:
-        report_details(environment, aircraft, aero)
+        flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
+        report_details(environment, aircraft, wing_aerodynamics(flow))
         report_aoa(state, aircraft, flow)
 
 
@@ -666,7 +908,7 @@ if __name__ == "__main__":
 # +--------------------------------------------------------------------+
 # PROJECT_DIR       = Folder containing this Python file.
 # DATA_DIR          = Folder containing the aircraft XML data.
-# G                 = Standard gravitational acceleration (m/s²); unused so far.
+# G                 = Standard gravitational acceleration (m/s²), used for weight.
 # FLOW_EPS_MPS      = Minimum chord-plane speed for a defined AoA (m/s).
 #                     This threshold does not turn small forces into zero.
 #
@@ -816,3 +1058,14 @@ if __name__ == "__main__":
 # UNSUPPORTED       = Operating condition lies outside current model support.
 # NOT IMPLEMENTED   = The calculation does not exist yet.
 # diagnostics option = --diagnostics prints the ledger and physics blockers.
+
+# VERTICAL TAKEOFF WORD BANK
+# left/right_proprotor_thrust_n = Separate rotor-axis thrust magnitudes (N).
+# total_rotor_vertical_force_n = Sum of projected upward rotor forces (N).
+# aircraft_weight_n = Selected takeoff mass times standard gravity (N).
+# net_vertical_force_n = Rotor vertical force + other vertical loads - weight.
+# vertical_acceleration_mps2 = Upward acceleration; includes ground support in motion result.
+# vertical_velocity_mps = Upward speed (m/s), distinct from NED down velocity.
+# height_agl_m = Height above runway (m), never MSL field elevation.
+# force_provider = Explicit external force law for integration; not aircraft reference data.
+# timestep_s = Seconds per force evaluation and constant-acceleration step.
