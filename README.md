@@ -159,6 +159,25 @@ All items are planned, not implemented, and serve the ground-to-liftoff task:
 
 ## Sources
 
+The 2026-11-10 NotebookLM geometry recovery is preserved verbatim in
+[`notebooklm_geometry_recovery_2026-11-10.md`](MY_physics_engine/data(v.2)/notebooklm_geometry_recovery_2026-11-10.md).
+Its machine-readable items are in `geometry.xml` under `notebooklm_geometry_recovery`,
+each with units, definition, NASA URL, supplied location and verification status.
+`Aircraft.geometry_recovery` exposes all items and citations; `--verbose` prints them.
+The supplied NotebookLM citation column was blank, and the NASA PDF fetch timed out;
+these claims are therefore marked `user_supplied_unverified`.
+
+Hub positions loaded into `Aircraft.rotor_hub_positions` describe the conversion tilt
+axis in aircraft FS/BL/WL datum coordinates in feet (aft/right/up), rather than
+CG-centered body coordinates. The supplied CG candidate (FS 295, WL 45 inches)
+is retained separately because the existing nominal FS is 296 inches. No CG
+transformation is applied. Exterior fuselage width is retained as a 5.0–5.2 ft range;
+the scalar width remains unknown. Exterior depth uses the supplied 74 inches,
+converted to feet. Interior dimensions are kept separate. Conflicting length,
+total-height and airfoil claims remain recorded alongside existing values.
+The vector AoA calculation already includes incidence once; no unsupported wake
+correction or aerodynamic coefficient arrays have been added.
+
 - [`sources.xml`](MY_physics_engine/data(v.2)/sources.xml) records the research inventory and citation-status notes.
 - NASA, [XV-15 Tiltrotor overview](https://www.nasa.gov/aeronautics/nasa-aircraft/xv-15-tiltrotor/).
 - NASA, [NASA/Army XV-15 Tilt Rotor Research Aircraft Familiarization Document (NASA TM-X-62407)](https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf), cited for detailed values in the XML. Verify extracted values against the report before using them quantitatively.

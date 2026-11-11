@@ -77,6 +77,28 @@ def try_load(loader, *args):
 
 
 
+def load_geometry_recovery():
+    """Load supplied geometry with per-item citations, without promoting claims to verified data."""
+    root = ET.parse(DATA_DIR / 'geometry.xml').getroot()
+    section = root.find('notebooklm_geometry_recovery')
+    if section is None:
+        raise ValueError('NotebookLM geometry recovery section is missing.')
+    return {node.attrib['name']: dict(node.attrib, value=node.text)
+            for node in section.findall('item')}
+
+
+def recovery_length_ft(items, name):
+    """Convert a cited length to feet; reject unknown units and invalid numbers."""
+    item = items[name]
+    factors = {'in': 1 / 12, 'ft': 1.0, 'm': 1 / 0.3048}
+    if item['unit'] not in factors:
+        raise ValueError(f"Unsupported length unit: {item['unit']}")
+    value = float(item['value'])
+    if not math.isfinite(value):
+        raise ValueError(f'Nonfinite geometry value: {name}')
+    return value * factors[item['unit']]
+
+
 class Aircraft:
     """Selected XV-15 parameters loaded from XML."""
 
@@ -113,6 +135,25 @@ class Aircraft:
         self.rotor_hub_positions = None
         self.fuselage_width_ft = None
         self.fuselage_height_ft = None
+        self.geometry_recovery = try_load(load_geometry_recovery)
+        self.isolated_nacelle_polars = None
+        if self.geometry_recovery is not None:
+            items = self.geometry_recovery
+            # Conversion-axis locations in the original NASA datum (aft/right/up).
+            # These are NOT rotor centers in TMPE's forward/right/down CG frame.
+            self.rotor_hub_positions = {
+                side: tuple(recovery_length_ft(items, f'hub_{side}_{axis}_in')
+                            for axis in ('fs', 'bl', 'wl'))
+                for side in ('left', 'right')
+            }
+            self.rotor_hub_positions_frame = 'aircraft datum FS/BL/WL, ft; aft/right/up'
+            self.fuselage_width_range_ft = tuple(
+                recovery_length_ft(items, f'fuselage_exterior_width_{bound}_ft')
+                for bound in ('min', 'max'))
+            # No single exterior width was provided; retain the scalar as unknown.
+            self.fuselage_height_ft = recovery_length_ft(items, 'fuselage_exterior_depth_ft')
+            self.fuselage_interior_width_ft = recovery_length_ft(items, 'fuselage_interior_max_width_ft')
+            self.rotor_radius_ft = recovery_length_ft(items, 'rotor_radius_ft')
 
     @property
     def wing_area_m2(self):
@@ -148,6 +189,7 @@ class AircraftState:
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
+    height_agl_m: float = 0.0
 
 
 def world_to_body_matrix(state):
@@ -324,6 +366,13 @@ def report_details(environment, aircraft, aero):
                                                      reason='aerodynamic model missing')),
     ):
         print(f"{label}: {value}")
+    if aircraft.geometry_recovery is not None:
+        print('\n--- NotebookLM geometry claims (not independently verified) ---')
+        for name, item in aircraft.geometry_recovery.items():
+            print(f"{name}: {item['value']} {item['unit']}")
+            print(f"  {item['definition']}")
+            print(f"  Citation: {item['source']}; {item['location']}; {item['url']}")
+        print('Hub positions use aircraft datum coordinates, not CG body coordinates.')
 
 
 def ask_float(prompt, default=None, minimum=None, places=2):
@@ -420,7 +469,7 @@ def main(argv=None):
 
     report_results(flow, aero)
     print("\nTakeoff status: not simulated — rotor thrust and vertical motion model missing.")
-    print("Aircraft remains at its initial ground state; height above ground = 0.00 m.")
+    print(f"Aircraft remains at its initial ground state; height above ground = {format_number(state.height_agl_m)} m.")
     print("Wing results describe freestream airflow only; they do not determine rotor lift or liftoff.")
     print("Educational prototype; not a validated flight simulator.")
     if args.verbose:
@@ -557,8 +606,8 @@ if __name__ == "__main__":
 #                   = Aircraft fuselage dimensions (ft); width/height unknown.
 # rotor_diameter_ft = Diameter of one rotor disk (ft).
 # rotor_blades_per_hub = Number of blades attached to each rotor hub.
-# rotor_hub_positions = Rotor hub locations; currently unknown, with no frame
-#                       or units established in this prototype.
+# rotor_hub_positions = Supplied tilt-axis locations in FS/BL/WL datum feet;
+#                       aft/right/up, not CG-centered body coordinates.
 #
 # +--------------------------------------------------------------------+
 # | B5. ENVIRONMENT AND PRESCRIBED AIRCRAFT STATE
@@ -654,9 +703,9 @@ if __name__ == "__main__":
 # +--------------------------------------------------------------------+
 #
 # C1. MISSING AIRCRAFT FIELDS — explicitly left as None in Aircraft
-#    - rotor_hub_positions: hub locations are not supplied/confirmed.
-#    - fuselage_width_ft: fuselage width is not supplied/confirmed.
-#    - fuselage_height_ft: fuselage height is not supplied/confirmed.
+#    - Rotor tilt-axis positions and exterior depth are supplied claims,
+#      loaded with citations; independent verification remains incomplete.
+#    - fuselage_width_ft stays None: exterior width is supplied as a range.
 #    - Any XML loading failure can also leave a loaded field as None.
 #    - Missing wing incidence prevents wing-frame velocity and wing AoA.
 #

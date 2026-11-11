@@ -76,6 +76,29 @@ class AoATests(unittest.TestCase):
             self.flow((float('nan'), 0, 0))
 
 
+class GeometryRecoveryTests(unittest.TestCase):
+    def test_citations_and_datum_coordinates(self):
+        aircraft = tmpe.Aircraft()
+        for item in aircraft.geometry_recovery.values():
+            self.assertTrue(item['url'].startswith('https://ntrs.nasa.gov/'))
+            self.assertTrue(item['location'])
+            self.assertEqual(item['status'], 'user_supplied_unverified')
+        self.assertAlmostEqual(aircraft.rotor_hub_positions['left'][0], 290 / 12)
+        self.assertAlmostEqual(aircraft.rotor_hub_positions['left'][1], -193 / 12)
+        self.assertAlmostEqual(aircraft.rotor_hub_positions['right'][2], 86.75 / 12)
+        self.assertEqual(aircraft.fuselage_width_range_ft, (5.0, 5.2))
+        self.assertIsNone(aircraft.fuselage_width_ft)
+        self.assertAlmostEqual(aircraft.fuselage_height_ft, 74 / 12)
+        self.assertIsNone(aircraft.isolated_nacelle_polars)
+
+    def test_length_units_and_invalid_data(self):
+        for unit, value in [('in', 12), ('ft', 1), ('m', .3048)]:
+            self.assertAlmostEqual(tmpe.recovery_length_ft({'x': {'value': value, 'unit': unit}}, 'x'), 1)
+        for unit, value in [('deg', 1), ('ft', 'nan')]:
+            with self.assertRaises(ValueError):
+                tmpe.recovery_length_ft({'x': {'value': value, 'unit': unit}}, 'x')
+
+
 class GroundStartTests(unittest.TestCase):
     def test_initial_state_is_stationary_on_ground(self):
         state = tmpe.AircraftState()
