@@ -207,7 +207,7 @@ class DiagnosticReportTests(unittest.TestCase):
         for output in (normal, diagnostics, verbose, both):
             self.assertIn('LEFT PROPROTOR', output)
             self.assertIn('AIRCRAFT WEIGHT', output)
-            self.assertIn('takeoff not simulated', output)
+            self.assertIn('TAKEOFF STATUS         : AIRBORNE', output)
         self.assertNotIn('DIAGNOSTIC REPORT', normal)
         self.assertNotIn('calculation trace', normal)
         self.assertIn('DIAGNOSTIC REPORT', diagnostics)
@@ -425,7 +425,7 @@ class IdealHoverTests(unittest.TestCase):
     def test_opt_in_report_keeps_takeoff_unavailable(self):
         output = io.StringIO()
         with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
-            tmpe.main(['--ideal-rated-hover', '--diagnostics'])
+            tmpe.main(['--ideal-rated-hover', '--diagnostics', '--rotor-model', 'unsupported'])
         text = output.getvalue()
         self.assertIn('NOT XV-15 PREDICTIONS', text)
         self.assertIn('takeoff not simulated', text)
@@ -571,6 +571,25 @@ class FixedCTPrototypeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.simulate(force_provider=lambda *args: {})
 
+    def test_requested_ct_scenarios_and_cli_default(self):
+        thrusts = []
+        for ct, status in ((.0100, 'GROUNDED'), (.0102, 'AIRBORNE'), (.0110, 'AIRBORNE')):
+            result = self.simulate(ct_override=ct)
+            balance, motion = result['balance'], result['motion']
+            total = result['left']['value'] + result['right']['value']
+            thrusts.append(total)
+            self.assertAlmostEqual(balance['total_rotor_vertical_force_n'], total)
+            self.assertAlmostEqual(balance['net_vertical_force_n'], total - balance['aircraft_weight_n'])
+            self.assertEqual(motion['takeoff_status'], status)
+            self.assertAlmostEqual(result['elapsed_s'], 5)
+            self.assertTrue(all(row['height_agl_m'] >= 0 for row in result['history']))
+        self.assertEqual(thrusts, sorted(thrusts))
+        output = io.StringIO()
+        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+            tmpe.main([])
+        self.assertIn(tmpe.PROTOTYPE_LABEL, output.getvalue())
+        self.assertIn('TAKEOFF STATUS         : AIRBORNE', output.getvalue())
+
     def test_cli_labels_and_override_validation(self):
         output = io.StringIO()
         with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
@@ -581,7 +600,7 @@ class FixedCTPrototypeTests(unittest.TestCase):
         self.assertIn('EXCLUDED', text)
         self.assertIn('GROUNDED', text)
         self.assertIn('not verified XV-15', text)
-        for flags in (['--prototype-ct', '.01'],
+        for flags in (['--rotor-model', 'unsupported', '--prototype-ct', '.01'],
                       ['--rotor-model', 'prototype-fixed-ct', '--prototype-ct', 'nan']):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 tmpe.main(flags)
@@ -604,10 +623,10 @@ class GroundStartTests(unittest.TestCase):
         text = output.getvalue()
         self.assertIn('helicopter-mode vertical takeoff', text)
         self.assertIn('on the ground, stationary, level, facing north', text)
-        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 0.00 m')
+        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 0.18 m')
         self.assertIn('Ground elevation (MSL): 500.00 m', text)
         self.assertIn('Prescribed ground velocity NED: (0.00, 0.00, 0.00) m/s', text)
-        self.assertIn('takeoff not simulated', text)
+        self.assertIn('TAKEOFF STATUS         : AIRBORNE', text)
 
 
 if __name__ == '__main__':

@@ -1,8 +1,8 @@
 # TMPE rotor thrust review and ideal hover estimate
 
-## Opt-in fixed-CT vertical-motion prototype
+## Default fixed-CT vertical-motion prototype
 
-The new `--rotor-model prototype-fixed-ct` option connects an illustrative rotor-force equation to the existing vertical-motion simulation. It is distinct from `--ideal-rated-hover`, which remains a separate static momentum-theory scenario. Default execution still has no supported real-XV-15 thrust model.
+The new `--rotor-model prototype-fixed-ct` option connects an illustrative rotor-force equation to the existing vertical-motion simulation. It is distinct from `--ideal-rated-hover`, which remains a separate static momentum-theory scenario. Terminal execution now selects this unvalidated approximation by default; use `--rotor-model unsupported` to disable it. Low-level Python APIs retain explicit model selection and unsupported defaults.
 
 The repository had no updated `prototype_thrust_model` XML section at implementation time. Only that section was added to `rotor.xml` from the user's explicit specification, leaving all other XML entries intact. Its `thrust_coefficient` is 0.0102, marked `derived_illustrative_unverified` with a user-assumption source rather than inherited aircraft-source attribution. It represents an illustrative hover-equilibrium assumption, not an independently measured or verified XV-15 coefficient. Near balance is therefore expected by construction and is not validation.
 

@@ -871,6 +871,9 @@ def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force
     left = calculate_proprotor('left', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
     right = calculate_proprotor('right', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
     while True:
+        if force_provider is None:
+            left = calculate_proprotor('left', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
+            right = calculate_proprotor('right', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
         # Algebraic zero implements explicit exclusions; it is not measured zero load.
         other = 0.0 if rotor_model == 'prototype-fixed-ct' else None
         if force_provider is not None:
@@ -981,8 +984,8 @@ def main(argv=None):
     parser.add_argument('--duration', type=float, default=5.0, help='requested simulation duration in seconds')
     parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
     parser.add_argument('--ideal-rated-hover', action='store_true', help='separate conditional lossless rated-power hover estimate; not XV-15 predictions')
-    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct'), default='unsupported',
-                        help='opt in to the illustrative fixed CT/RPM thrust model')
+    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct'), default='prototype-fixed-ct',
+                        help='default: unvalidated fixed CT/RPM approximation; unsupported disables approximate physics')
     parser.add_argument('--prototype-ct', type=float, help='assumed CT override for both prototype rotors')
     args = parser.parse_args(argv)
     if args.prototype_ct is not None:
@@ -1255,7 +1258,8 @@ if __name__ == "__main__":
 # FIXED CT PROTOTYPE WORD BANK
 # prototype_thrust_coefficient = XML illustrative CT assumption, dimensionless.
 # ct_override = Explicit experimental CT assumption for one rotor call or both CLI rotors.
-# rotor_model = unsupported (default) or opt-in prototype-fixed-ct.
+# rotor_model = CLI defaults to prototype-fixed-ct; unsupported disables approximation.
+#               Low-level APIs retain unsupported defaults for explicit model selection.
 # angular_speed_rad_s = RPM * 2*pi/60, radians per second.
 # disk_area_m2 = pi * radius_m**2; precise circular area, not rounded XML area.
 # excluded_loads = Effects intentionally omitted, not measured zero physical loads.

@@ -26,7 +26,7 @@
     <design_rotor_speed mode="hover" unit="rpm" tip_speed="740 ft/s" location="table 4.5, p. 25; p. 19">565</design_rotor_speed>
     
     <design_rotor_speed mode="cruise" unit="rpm" tip_speed="600 ft/s" location="table 4.5, p. 25; p. 19">458</design_rotor_speed>
-    
+
     <test_rotor_speed mode="hover" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">589</test_rotor_speed>
     <test_rotor_speed mode="cruise" unit="rpm" source="S3" status="reported flight-test operating speed" citation_status="pinpoint supplied in 2026-10-22 audit" location="Appendix A, XV-15 Characteristics, Proprotor table, printed p. 149 / PDF p. 160">517</test_rotor_speed>
     
@@ -81,6 +81,7 @@
 </supplemental_rotor_geometry>
     <prototype_thrust_model source="user-specified prototype assumption" status="derived_illustrative_unverified" location="TMPE prototype request, 2026-11-10" provenance="Illustrative hover-equilibrium assumption; not measured or verified XV-15 rotor data.">
       <thrust_coefficient unit="1" convention="T = CT rho A (Omega R)^2">0.0102</thrust_coefficient>
+      <!--0.01095 as an assumption. -->
       <assumptions>Fixed CT and design hover RPM; wind, inflow response, collective control, engine power constraints, wing download, ground effect and rotor interference excluded.</assumptions>
     </prototype_thrust_model>
   </proprotor_and_drive_system>
