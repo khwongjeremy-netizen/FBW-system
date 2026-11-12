@@ -9,7 +9,7 @@ An alternate JSON path can be supplied for isolated calibration or mathematical 
 The shipped model is **UNCALIBRATED / UNAVAILABLE**. All three calibration parameters
 are null. It never associates the existing fixed CT of 0.0102 with 10 degrees or any
 other pitch. No fallback to the fixed coefficient occurs when collective is requested.
-The existing fixed-CT implementation and CLI default remain unchanged.
+The existing fixed-CT implementation remains available explicitly; the CLI now defaults to collective mode.
 
 ## Parameter evidence and missing data
 
@@ -54,7 +54,7 @@ right = calculate_proprotor(
 Each call evaluates its own pilot input; each rotor may use a different model instance
 or configuration. Inputs must be finite numeric degrees, including on an uncalibrated
 model, and must satisfy the configured bounds. Missing/malformed data yield None with
-an explicit reason, never a thrust prediction. The CLI now supports `--rotor-model prototype-collective` and prompts separately for left and right pitch. The default remains `prototype-fixed-ct`.
+an explicit reason, never a thrust prediction. The CLI now supports `--rotor-model prototype-collective` and prompts separately for left and right pitch. The default is `prototype-collective`.
 
 Supported CT feeds the existing independent per-rotor SI equation:
 `T = CT * rho * A * (Omega * R)**2`, where `A = pi*R**2`,
@@ -121,3 +121,35 @@ k_theta=0.001/degree. These are arbitrary test values, not XV-15 estimates. Inpu
 CT=0.011 and about 9.81 m height after five seconds under the excluded-load exercise.
 Both mathematical success and changing motion are software checks, not experimental
 validation. See [actual commands and terminal output](TMPE_COLLECTIVE_CLI_RUNS.md).
+
+
+## Normal execution and interactive testing
+
+Running the Python file without arguments (including VS Code Run Python File) now
+selects `prototype-collective`. The five environmental questions are unchanged.
+With the shipped uncalibrated configuration, the program lists missing calibration
+fields and asks `Enable illustrative collective testing? [y/N]:`. Only `y` or `yes`
+enables `tests/fixtures/collective_illustrative.json`; Enter, `n` or `no` retains the
+unavailable aircraft model. Other responses are rejected and prompted again.
+The fixture path resolves from the source file, independent of the working directory.
+
+After that choice, left and right pitch are prompted separately with the selected
+configuration's sourced bounds displayed. Illustrative results remain labeled as
+mathematical testing and NOT VALIDATED. Selecting 6 degrees on both sides after
+opting in produces approximately 9.81 m after five simulated seconds.
+
+`--allow-illustrative-collective` explicitly selects the existing fixture when no
+`--collective-config` is supplied. An explicit configuration path is honored as
+supplied and illustrative data there still require the explicit opt-in flag.
+The low-level physics API defaults remain unchanged.
+
+Fixed-CT regression execution:
+
+```sh
+python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' --rotor-model prototype-fixed-ct
+```
+
+See [default-mode execution evidence](TMPE_DEFAULT_COLLECTIVE_RUNS.md) for actual
+commands and outputs. The automated suite passed 57 tests after this default change.
+Earlier CLI execution logs and the ChatGPT handoff describe the prior default and
+are historical records; this section describes current startup behavior.

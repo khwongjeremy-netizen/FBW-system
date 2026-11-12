@@ -196,7 +196,7 @@ class DiagnosticReportTests(unittest.TestCase):
     def run_main(self, flags):
         output = io.StringIO()
         with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
-            tmpe.main(flags)
+            tmpe.main(['--rotor-model', 'prototype-fixed-ct'] + flags)
         return output.getvalue()
 
     def test_output_modes(self):
@@ -571,7 +571,7 @@ class FixedCTPrototypeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.simulate(force_provider=lambda *args: {})
 
-    def test_requested_ct_scenarios_and_cli_default(self):
+    def test_requested_ct_scenarios_and_explicit_fixed_cli(self):
         thrusts = []
         for ct, status in ((.0100, 'GROUNDED'), (.0102, 'AIRBORNE'), (.0110, 'AIRBORNE')):
             result = self.simulate(ct_override=ct)
@@ -586,7 +586,7 @@ class FixedCTPrototypeTests(unittest.TestCase):
         self.assertEqual(thrusts, sorted(thrusts))
         output = io.StringIO()
         with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
-            tmpe.main([])
+            tmpe.main(['--rotor-model', 'prototype-fixed-ct'])
         self.assertIn(tmpe.PROTOTYPE_LABEL, output.getvalue())
         self.assertIn('TAKEOFF STATUS         : AIRBORNE', output.getvalue())
 
@@ -618,7 +618,7 @@ class GroundStartTests(unittest.TestCase):
         # Only environmental inputs remain; field elevation is not height AGL.
         with patch('builtins.input', side_effect=['', '', '', '', '500']) as prompts:
             with contextlib.redirect_stdout(output):
-                tmpe.main(['--verbose'])
+                tmpe.main(['--verbose', '--rotor-model', 'prototype-fixed-ct'])
         self.assertEqual(prompts.call_count, 5)
         text = output.getvalue()
         self.assertIn('helicopter-mode vertical takeoff', text)
@@ -724,11 +724,11 @@ class CollectiveCLITests(unittest.TestCase):
     def run_cli(self, pitches, extra=None):
         output = io.StringIO()
         flags = ['--rotor-model', 'prototype-collective'] + (extra or [])
-        with patch('builtins.input', side_effect=[''] * 5 + pitches) as prompts:
+        with patch('builtins.input', side_effect=[''] * 5 + (['n'] if not extra else []) + pitches) as prompts:
             with patch.object(tmpe, 'calculate_collective_proprotor', wraps=tmpe.calculate_collective_proprotor) as calculation:
                 with patch.object(tmpe, 'simulate_takeoff', wraps=tmpe.simulate_takeoff) as simulation:
                     with contextlib.redirect_stdout(output):
-                        tmpe.main(flags)
+                        tmpe.main(['--rotor-model', 'prototype-fixed-ct'] + flags)
         return output.getvalue(), prompts, calculation, simulation
 
     def test_cli_prompts_dispatch_and_motion(self):
@@ -780,11 +780,56 @@ class CollectiveCLITests(unittest.TestCase):
         self.assertEqual({call.args[3] for call in calls.call_args_list}, {4, 6})
 
     def test_invalid_option_combinations(self):
-        for flags in (['--collective-config', str(self.fixture)],
-                      ['--allow-illustrative-collective'],
+        for flags in (['--rotor-model', 'prototype-fixed-ct', '--collective-config', str(self.fixture)],
+                      ['--rotor-model', 'prototype-fixed-ct', '--allow-illustrative-collective'],
                       ['--rotor-model', 'prototype-collective', '--prototype-ct', '.01']):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 tmpe.main(flags)
+
+
+class DefaultCollectiveTests(unittest.TestCase):
+    def run_default(self, answers):
+        output = io.StringIO()
+        with patch('builtins.input', side_effect=[''] * 5 + answers) as prompts:
+            with contextlib.redirect_stdout(output):
+                tmpe.main([])
+        return output.getvalue(), prompts
+
+    def test_normal_execution_opt_in_and_pitch_validation(self):
+        text, prompts = self.run_default(['maybe', 'yes', 'nan', 'inf', '21', '6', '6'])
+        self.assertIn('Enable illustrative collective testing?', prompts.call_args_list[5].args[0])
+        self.assertIn('Please answer yes or no.', text)
+        self.assertIn('Model: prototype-collective', text)
+        self.assertIn('finite number', text)
+        self.assertIn('outside provisional-software bounds', text)
+        self.assertIn('source', text)
+        self.assertIn('left: pilot collective = 6.0 deg; CT = 0.011', text)
+        self.assertIn('right: pilot collective = 6.0 deg; CT = 0.011', text)
+        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 9.81 m')
+        self.assertIn('MATHEMATICAL TEST ONLY', text)
+        self.assertIn('experimental validation: NOT VALIDATED', text)
+
+    def test_decline_preserves_unavailable_aircraft_model(self):
+        for answer in ('no', ''):
+            text, prompts = self.run_default([answer, '4', '6'])
+            self.assertEqual(prompts.call_count, 8)
+            self.assertIn('Model: prototype-collective', text)
+            for name in ('CT_reference', 'k_theta_per_deg', 'theta_reference_deg', 'reference_condition'):
+                self.assertIn(name, text)
+            self.assertIn('TAKEOFF STATUS         : UNAVAILABLE', text)
+            self.assertIn('takeoff not simulated', text)
+            self.assertNotIn('CT = 0.0102', text)
+
+    def test_fixture_resolves_independently_of_working_directory(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            previous = Path.cwd()
+            try:
+                os.chdir(directory)
+                text, _ = self.run_default(['y', '6', '6'])
+            finally:
+                os.chdir(previous)
+        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 9.81 m')
 
 
 if __name__ == '__main__':

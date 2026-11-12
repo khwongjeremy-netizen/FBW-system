@@ -1124,8 +1124,8 @@ def main(argv=None):
     parser.add_argument('--duration', type=float, default=5.0, help='requested simulation duration in seconds')
     parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
     parser.add_argument('--ideal-rated-hover', action='store_true', help='separate conditional lossless rated-power hover estimate; not XV-15 predictions')
-    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct', 'prototype-collective'), default='prototype-fixed-ct',
-                        help='fixed-CT default; prototype-collective prompts for pitch with configuration-backed CT; unsupported disables approximations')
+    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct', 'prototype-collective'), default='prototype-collective',
+                        help='default: prototype-collective with pilot pitch; prototype-fixed-ct is available for regression testing')
     parser.add_argument('--prototype-ct', type=float, help='assumed CT override for both prototype rotors')
     parser.add_argument('--collective-config', type=Path, help='collective model JSON; default: data(v.2)/collective_model.json')
     parser.add_argument('--allow-illustrative-collective', action='store_true', help='opt in to illustrative collective math tests; NOT aircraft predictions')
@@ -1187,6 +1187,22 @@ def main(argv=None):
     collective_options = {}
     if args.rotor_model == 'prototype-collective':
         model = LinearCollectiveModel.load(args.collective_config)
+        if args.collective_config is None:
+            illustrative_path = PROJECT_DIR.parent / 'tests' / 'fixtures' / 'collective_illustrative.json'
+            if not args.allow_illustrative_collective and model.parameters.get('parameter_status') != 'calibrated':
+                print('\nAircraft collective model is UNCALIBRATED / UNAVAILABLE.')
+                print(model.evaluate(0)['reason'])
+                print('Illustrative fixture:', illustrative_path)
+                print('Illustrative coefficients are for SOFTWARE TESTING ONLY; NOT validated XV-15 predictions.')
+                while True:
+                    answer = input('Enable illustrative collective testing? [y/N]: ').strip().lower()
+                    if answer in ('y', 'yes', 'n', 'no', ''):
+                        args.allow_illustrative_collective = answer in ('y', 'yes')
+                        break
+                    print('Please answer yes or no.')
+            if args.allow_illustrative_collective:
+                model = LinearCollectiveModel.load(illustrative_path)
+                print('ILLUSTRATIVE — MATHEMATICAL TEST ONLY; experimental validation: NOT VALIDATED')
         bounds = model.parameters.get('pitch_bounds')
         print('\nCollective pitch bounds:', bounds)
         print('Calibration source:', model.parameters.get('source'))
@@ -1420,7 +1436,7 @@ if __name__ == "__main__":
 # FIXED CT PROTOTYPE WORD BANK
 # prototype_thrust_coefficient = XML illustrative CT assumption, dimensionless.
 # ct_override = Explicit experimental CT assumption for one rotor call or both CLI rotors.
-# rotor_model = CLI defaults to prototype-fixed-ct; unsupported disables approximation.
+# rotor_model = CLI defaults to prototype-collective; explicit prototype-fixed-ct preserves regression mode.
 #               Low-level APIs retain unsupported defaults for explicit model selection.
 # angular_speed_rad_s = RPM * 2*pi/60, radians per second.
 # disk_area_m2 = pi * radius_m**2; precise circular area, not rounded XML area.
