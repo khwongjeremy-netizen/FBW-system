@@ -213,9 +213,9 @@ def report_diagnostics(aircraft, flow, aero, takeoff_result=None):
         if row.get('citation'):
             print('    Citation: ' + '; '.join(f'{key}={value}' for key, value in row['citation'].items()))
     results = physics_diagnostics(flow, aero)
-    if takeoff_result is not None and takeoff_result.get('rotor_model') == 'prototype-fixed-ct':
+    if takeoff_result is not None and takeoff_result.get('rotor_model') in ('prototype-fixed-ct', 'prototype-collective'):
         ready = all(takeoff_result[side]['value'] is not None for side in ('left', 'right'))
-        results['Rotor thrust'] = ('CALCULATED' if ready else 'UNAVAILABLE', PROTOTYPE_LABEL + '; see primary rotor results and assumptions')
+        results['Rotor thrust'] = ('CALCULATED' if ready else 'UNAVAILABLE', takeoff_result['rotor_model'] + '; see primary rotor results and assumptions')
     print('\nPHYSICS')
     for name, (status, reason) in results.items():
         print(f'  {name}: {status} — {reason}')
@@ -674,7 +674,7 @@ class LinearCollectiveModel:
         if not lo <= theta <= hi:
             return fail(f'Collective outside {basis} bounds [{lo}, {hi}] deg')
         names = ('CT_reference', 'k_theta_per_deg', 'theta_reference_deg')
-        missing = [name for name in names if p.get(name) is None]
+        missing = [name for name in (*names, 'reference_condition') if p.get(name) is None]
         if missing:
             return fail('UNCALIBRATED: missing ' + ', '.join(missing))
         if any(not finite(p[name]) for name in names):
@@ -711,6 +711,8 @@ def calculate_collective_proprotor(side, aircraft, environment, theta, model=Non
     # Preserve force-law availability and SI inputs, replace fixed-CT provenance.
     for key in ('value', 'status', 'reason'):
         metadata.pop(key)
+    if thrust['status'] == 'CALCULATED':
+        thrust['reason'] = coefficient['reason'] + '; T = CT rho A (Omega R)^2'
     thrust.update(metadata, label='LOCAL COLLECTIVE APPROXIMATION — ' + coefficient['calibration_status'],
                   source_status=coefficient['calibration_status'],
                   assumptions=('Local pitch response only; fixed RPM. No inflow, stall, power limits, '
@@ -729,12 +731,12 @@ def calculate_proprotor(side, aircraft, environment, *, rotor_model='unsupported
     """
     if side not in ('left', 'right'):
         raise ValueError('Proprotor side must be left or right')
-    if rotor_model == 'linear-collective':
+    if rotor_model in ('linear-collective', 'prototype-collective'):
         if ct_override is not None:
             raise ValueError('CT override requires prototype-fixed-ct mode')
         return calculate_collective_proprotor(side, aircraft, environment, collective_deg, ct_model,
                                              allow_illustrative=allow_illustrative)
-    if collective_deg is not None or ct_model is not None:
+    if collective_deg is not None or ct_model is not None or allow_illustrative:
         raise ValueError('Collective inputs require linear-collective mode')
     if rotor_model == 'prototype-fixed-ct':
         return calculate_fixed_ct_proprotor(side, aircraft, environment, ct_override=ct_override)
@@ -767,6 +769,12 @@ PROTOTYPE_EXCLUSIONS = ('Wing download, ground effect, rotor interference and ot
                         'Entered wind is excluded from rotor thrust and motion; no windy-hover claim. '
                         'Fixed CT/RPM do not respond to collective, inflow, climb speed or active control. '
                         'No realistic climb performance or engine power demand is predicted.')
+
+
+COLLECTIVE_EXCLUSIONS = ('Wing download, ground effect, rotor interference and other aerodynamic loads '
+                         'are EXCLUDED, not measured zero. Wind, inflow response, stall and power limits '
+                         'are excluded. Fixed RPM; constant selected pitch per rotor. '
+                         'Software mechanics exercise; NOT XV-15 aircraft predictions.')
 
 
 def calculate_fixed_ct_proprotor(side, aircraft, environment, *, ct_override=None):
@@ -948,7 +956,8 @@ def integrate_vertical(height_agl_m, vertical_velocity_mps, mass_kg, net_vertica
 
 
 def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force_provider=None,
-                     *, rotor_model='unsupported', ct_override=None):
+                     *, rotor_model='unsupported', ct_override=None, collective_deg=None,
+                     ct_model=None, allow_illustrative=False):
     """Run vertical-only motion; a supplied provider must establish forces each step.
 
     Provider(time, height, upward_velocity) returns left/right thrust and explicit
@@ -961,26 +970,38 @@ def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force
     require_finite('Timestep', timestep_s, 0)
     if timestep_s == 0:
         raise ValueError('Timestep must be positive')
-    if rotor_model not in ('unsupported', 'prototype-fixed-ct'):
+    if rotor_model not in ('unsupported', 'prototype-fixed-ct', 'prototype-collective'):
         raise ValueError(f'Unknown rotor model: {rotor_model}')
     if ct_override is not None and rotor_model != 'prototype-fixed-ct':
         raise ValueError('CT override requires prototype-fixed-ct mode')
-    if force_provider is not None and rotor_model == 'prototype-fixed-ct':
-        raise ValueError('Choose prototype-fixed-ct or an external force provider')
+    prototype = rotor_model in ('prototype-fixed-ct', 'prototype-collective')
+    if force_provider is not None and prototype:
+        raise ValueError('Choose a prototype rotor model or an external force provider')
+    if rotor_model != 'prototype-collective' and (collective_deg is not None or ct_model is not None or allow_illustrative):
+        raise ValueError('Collective inputs require prototype-collective mode')
+    if rotor_model == 'prototype-collective':
+        ct_model = ct_model if ct_model is not None else LinearCollectiveModel.load()
+    pitches = collective_deg if isinstance(collective_deg, dict) else dict(left=collective_deg, right=collective_deg)
+
+    def rotor(side):
+        options = dict(rotor_model=rotor_model, ct_override=ct_override)
+        if rotor_model == 'prototype-collective':
+            options.update(collective_deg=pitches.get(side), ct_model=ct_model, allow_illustrative=allow_illustrative)
+        return calculate_proprotor(side, aircraft, environment, **options)
     for name in ('rotor_diameter_ft', 'hover_rotor_rpm', 'prototype_thrust_coefficient'):
-        aircraft.diagnostics[name]['used'] = (rotor_model == 'prototype-fixed-ct' and
-            (name != 'prototype_thrust_coefficient' or ct_override is None))
+        aircraft.diagnostics[name]['used'] = (prototype and
+            (name != 'prototype_thrust_coefficient' or (rotor_model == 'prototype-fixed-ct' and ct_override is None)))
     mass = takeoff_mass_kg(aircraft.design_gross)
     time, height, velocity = 0.0, 0.0, 0.0
     history = []
-    left = calculate_proprotor('left', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
-    right = calculate_proprotor('right', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
+    left = rotor('left')
+    right = rotor('right')
     while True:
         if force_provider is None:
-            left = calculate_proprotor('left', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
-            right = calculate_proprotor('right', aircraft, environment, rotor_model=rotor_model, ct_override=ct_override)
+            left = rotor('left')
+            right = rotor('right')
         # Algebraic zero implements explicit exclusions; it is not measured zero load.
-        other = 0.0 if rotor_model == 'prototype-fixed-ct' else None
+        other = 0.0 if prototype else None
         if force_provider is not None:
             forces = force_provider(time, height, velocity)
             left = calculated(forces['left_proprotor_thrust_n'], 'Explicit external force provider; not validated XV-15 data')
@@ -1010,7 +1031,8 @@ def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force
                 left_proprotor_thrust_n=left['value'], right_proprotor_thrust_n=right['value'],
                 takeoff_mass_kg=mass, elapsed_s=time, history=history,
                 other_vertical_force_n=other, nacelle_angle_deg=aircraft.nacelle_angle_deg,
-                rotor_model=rotor_model, excluded_loads=PROTOTYPE_EXCLUSIONS if rotor_model == 'prototype-fixed-ct' else None)
+                rotor_model=rotor_model, excluded_loads=(COLLECTIVE_EXCLUSIONS if rotor_model == 'prototype-collective' else
+                                                       PROTOTYPE_EXCLUSIONS if prototype else None))
 
 
 def report_takeoff(result):
@@ -1023,6 +1045,15 @@ def report_takeoff(result):
             row = result[side]
             print(f"{side}: {row['source']} | {row['reason']}")
             print(f"  Inputs: {row['inputs']}")
+    if result.get('rotor_model') == 'prototype-collective':
+        print('\nModel: prototype-collective')
+        print('CT(theta) = CT_reference + k_theta * (theta - theta_reference)')
+        print(COLLECTIVE_EXCLUSIONS)
+        for side in ('left', 'right'):
+            row = result[side]
+            print(f"{side}: pilot collective = {row.get('theta_deg')} deg; CT = {row.get('thrust_coefficient')}; {row['status']}")
+            print(f"  Collective calculation: {row['reason']}")
+            print(f"  Calibration: {row.get('calibration_status')}; experimental validation: {row.get('experimental_validation_status')}")
     print('\n--- Rotor performance ---')
     for label, value in (('LEFT PROPROTOR', result['left']['value']),
                          ('RIGHT PROPROTOR', result['right']['value']),
@@ -1050,7 +1081,7 @@ def report_takeoff(result):
             print('Initial state retained; takeoff not simulated. Initial velocity/height are not trajectory predictions.')
         else:
             print('Simulation stopped; last supported state retained. No motion predicted beyond this time.')
-        if result.get('rotor_model') == 'prototype-fixed-ct':
+        if result.get('rotor_model') in ('prototype-fixed-ct', 'prototype-collective'):
             print('Blockers: ' + '; '.join(result[key]['reason'] for key in ('left', 'right', 'balance')))
         else:
             print('Blockers: rotor mast power, thrust performance maps and supported other vertical loads. See --diagnostics.')
@@ -1065,11 +1096,15 @@ def report_takeoff_diagnostics(result, verbose=False):
     if result.get('rotor_model') == 'prototype-fixed-ct':
         print('  Other vertical loads: EXCLUDED — ' + PROTOTYPE_EXCLUSIONS)
         print('  Rotor model: ' + PROTOTYPE_LABEL)
+    elif result.get('rotor_model') == 'prototype-collective':
+        print('  Other vertical loads: ' + COLLECTIVE_EXCLUSIONS)
     elif result['other_vertical_force_n'] is None:
         print('  Other vertical loads: UNAVAILABLE — ground effect, wing download and drag not established for ground liftoff.')
     else:
         print(f"  Other vertical loads: CALCULATED — explicit force provider: {result['other_vertical_force_n']} N")
-    if result.get('rotor_model') != 'prototype-fixed-ct':
+    if result.get('rotor_model') == 'prototype-collective':
+        print('  Rotor model: prototype-collective — local linear CT; experimental validation: NOT VALIDATED')
+    elif result.get('rotor_model') != 'prototype-fixed-ct':
         print('  Rotor model: NOT IMPLEMENTED — supported CT/CQ or equivalent performance map required.')
     print('  Shaft power: UNAVAILABLE — engine rating is not commanded rotor mast power; power split and operating conditions unresolved.')
     print(f'  Nacelle convention: 90° vertical, 0° forward; NASA TM-81244 printed p. 4 / PDF p. 6; {NACELLE_SOURCE}')
@@ -1089,10 +1124,14 @@ def main(argv=None):
     parser.add_argument('--duration', type=float, default=5.0, help='requested simulation duration in seconds')
     parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
     parser.add_argument('--ideal-rated-hover', action='store_true', help='separate conditional lossless rated-power hover estimate; not XV-15 predictions')
-    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct'), default='prototype-fixed-ct',
-                        help='default: unvalidated fixed CT/RPM approximation; unsupported disables approximate physics')
+    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct', 'prototype-collective'), default='prototype-fixed-ct',
+                        help='fixed-CT default; prototype-collective prompts for pitch with configuration-backed CT; unsupported disables approximations')
     parser.add_argument('--prototype-ct', type=float, help='assumed CT override for both prototype rotors')
+    parser.add_argument('--collective-config', type=Path, help='collective model JSON; default: data(v.2)/collective_model.json')
+    parser.add_argument('--allow-illustrative-collective', action='store_true', help='opt in to illustrative collective math tests; NOT aircraft predictions')
     args = parser.parse_args(argv)
+    if args.rotor_model != 'prototype-collective' and (args.collective_config is not None or args.allow_illustrative_collective):
+        parser.error('collective options require --rotor-model prototype-collective')
     if args.prototype_ct is not None:
         if args.rotor_model != 'prototype-fixed-ct':
             parser.error('--prototype-ct requires --rotor-model prototype-fixed-ct')
@@ -1145,8 +1184,26 @@ def main(argv=None):
         altitude=altitude
     )
 
+    collective_options = {}
+    if args.rotor_model == 'prototype-collective':
+        model = LinearCollectiveModel.load(args.collective_config)
+        bounds = model.parameters.get('pitch_bounds')
+        print('\nCollective pitch bounds:', bounds)
+        print('Calibration source:', model.parameters.get('source'))
+        pitches = {}
+        for side in ('left', 'right'):
+            while True:
+                theta = ask_float(f'Pilot {side} collective pitch (degrees)')
+                check = model.evaluate(theta, allow_illustrative=args.allow_illustrative_collective)
+                if check['reason'].startswith('Collective outside'):
+                    print(check['reason'])
+                    continue
+                pitches[side] = theta
+                break
+        collective_options = dict(collective_deg=pitches, ct_model=model,
+                                  allow_illustrative=args.allow_illustrative_collective)
     result = simulate_takeoff(aircraft, environment, args.duration, args.dt,
-                              rotor_model=args.rotor_model, ct_override=args.prototype_ct)
+                              rotor_model=args.rotor_model, ct_override=args.prototype_ct, **collective_options)
     report_takeoff(result)
     if args.ideal_rated_hover:
         report_rated_ideal_hover(aircraft, environment)

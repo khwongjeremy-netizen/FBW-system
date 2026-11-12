@@ -54,7 +54,7 @@ right = calculate_proprotor(
 Each call evaluates its own pilot input; each rotor may use a different model instance
 or configuration. Inputs must be finite numeric degrees, including on an uncalibrated
 model, and must satisfy the configured bounds. Missing/malformed data yield None with
-an explicit reason, never a thrust prediction. No collective CLI mode is enabled.
+an explicit reason, never a thrust prediction. The CLI now supports `--rotor-model prototype-collective` and prompts separately for left and right pitch. The default remains `prototype-fixed-ct`.
 
 Supported CT feeds the existing independent per-rotor SI equation:
 `T = CT * rho * A * (Omega * R)**2`, where `A = pi*R**2`,
@@ -67,7 +67,7 @@ accepts a function `(time, height, upward_velocity)` returning
 That function can call the two rotor evaluations above and pass their `value` fields;
 unavailable values stop integration. Other forces must be explicitly established or
 explicitly excluded by the caller; the new collective API does not silently zero them.
-This keeps force balance, integration and the working fixed-CT takeoff path unchanged.
+This keeps force balance, integration and the working fixed-CT takeoff path unchanged. The new built-in `prototype-collective` simulation mode also connects directly to these same force and integration functions, explicitly excluding other loads for a software mechanics exercise.
 
 A future curve or BEMT adapter implements `evaluate(theta, *, allow_illustrative=False)`
 and returns `value` (CT or None), `status`, `reason`, `calibration_status`, and
@@ -92,3 +92,32 @@ residual analysis over the intended envelope. Neither mathematical test success 
 an equilibrium constructed using 0.0102 validates XV-15 performance. The local model
 omits inflow response, stall, power/torque limits, ground effect, interference and wind;
 it cannot establish realistic takeoff or climb performance.
+
+
+## CLI debugging result
+
+The initial implementation exposed only the `linear-collective` Python API. Argparse
+and `simulate_takeoff` accepted only `unsupported` and `prototype-fixed-ct`; there was
+no pitch prompt. The CLI default therefore continued to show the fixed coefficient.
+The minimal wiring now accepts `prototype-collective`, loads `--collective-config`
+(or the uncalibrated default), asks each pilot pitch and passes it to the collective
+calculation on every force evaluation. `--prototype-ct` remains exclusive to fixed CT.
+
+Run the aircraft configuration (expected UNCALIBRATED / UNAVAILABLE):
+
+```sh
+python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' --rotor-model prototype-collective
+```
+
+Run explicitly illustrative mathematical testing:
+
+```sh
+python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' --rotor-model prototype-collective --collective-config tests/fixtures/collective_illustrative.json --allow-illustrative-collective
+```
+
+The synthetic fixture uses CT_reference=0.009, theta_reference=4 degrees and
+k_theta=0.001/degree. These are arbitrary test values, not XV-15 estimates. Input
+4 degrees on both sides produces CT=0.009 and grounded motion; 6 degrees produces
+CT=0.011 and about 9.81 m height after five seconds under the excluded-load exercise.
+Both mathematical success and changing motion are software checks, not experimental
+validation. See [actual commands and terminal output](TMPE_COLLECTIVE_CLI_RUNS.md).

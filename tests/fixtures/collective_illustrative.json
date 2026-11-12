@@ -1,0 +1,14 @@
+{
+  "parameter_status": "illustrative",
+  "CT_reference": 0.009,
+  "k_theta_per_deg": 0.001,
+  "theta_reference_deg": 4.0,
+  "source": "Arbitrary synthetic software-test fixture; NOT measured XV-15 data",
+  "reference_condition": "Mathematical exercise only; no aircraft reference condition asserted",
+  "pitch_bounds": {
+    "minimum_deg": -10.0,
+    "maximum_deg": 20.0,
+    "basis": "provisional-software",
+    "source": "Synthetic fixture input guard; NOT aircraft limits"
+  }
+}

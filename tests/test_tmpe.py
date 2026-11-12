@@ -718,5 +718,74 @@ class CollectiveModelTests(unittest.TestCase):
         self.assertAlmostEqual(row['value'], self.rotor(4)['value'] * 1.5)
 
 
+class CollectiveCLITests(unittest.TestCase):
+    fixture = Path(__file__).parent / 'fixtures' / 'collective_illustrative.json'
+
+    def run_cli(self, pitches, extra=None):
+        output = io.StringIO()
+        flags = ['--rotor-model', 'prototype-collective'] + (extra or [])
+        with patch('builtins.input', side_effect=[''] * 5 + pitches) as prompts:
+            with patch.object(tmpe, 'calculate_collective_proprotor', wraps=tmpe.calculate_collective_proprotor) as calculation:
+                with patch.object(tmpe, 'simulate_takeoff', wraps=tmpe.simulate_takeoff) as simulation:
+                    with contextlib.redirect_stdout(output):
+                        tmpe.main(flags)
+        return output.getvalue(), prompts, calculation, simulation
+
+    def test_cli_prompts_dispatch_and_motion(self):
+        flags = ['--collective-config', str(self.fixture), '--allow-illustrative-collective']
+        low, prompts, calls, _ = self.run_cli(['4', '4'], flags)
+        high, _, high_calls, _ = self.run_cli(['6', '6'], flags)
+        self.assertIn('Pilot left collective pitch', prompts.call_args_list[5].args[0])
+        self.assertIn('Pilot right collective pitch', prompts.call_args_list[6].args[0])
+        self.assertEqual({call.args[0] for call in calls.call_args_list}, {'left', 'right'})
+        self.assertTrue(all(call.args[3] == 4 for call in calls.call_args_list))
+        self.assertTrue(all(call.args[3] == 6 for call in high_calls.call_args_list))
+        self.assertIn('CT = 0.009', low)
+        self.assertIn('CT = 0.011', high)
+        self.assertIn('TAKEOFF STATUS         : GROUNDED', low)
+        self.assertIn('TAKEOFF STATUS         : AIRBORNE', high)
+        self.assertIn('experimental validation: NOT VALIDATED', high)
+        self.assertIn('MATHEMATICAL TEST ONLY', high)
+
+    def test_per_side_ct_and_analytic_trajectory(self):
+        model = tmpe.LinearCollectiveModel.load(self.fixture)
+        aircraft, env = tmpe.Aircraft(), tmpe.Environment()
+        result = tmpe.simulate_takeoff(aircraft, env, duration_s=2,
+            rotor_model='prototype-collective', collective_deg={'left': 5, 'right': 7},
+            ct_model=model, allow_illustrative=True)
+        self.assertAlmostEqual(result['left']['thrust_coefficient'], .010)
+        self.assertAlmostEqual(result['right']['thrust_coefficient'], .012)
+        self.assertAlmostEqual(result['right']['value'] / result['left']['value'], 1.2)
+        acceleration = result['balance']['net_vertical_force_n'] / result['takeoff_mass_kg']
+        self.assertGreater(acceleration, 0)
+        self.assertAlmostEqual(result['motion']['height_agl_m'], .5 * acceleration * 2**2)
+        self.assertFalse(aircraft.diagnostics['prototype_thrust_coefficient']['used'])
+
+    def test_missing_data_and_illustrative_opt_in(self):
+        text, _, _, _ = self.run_cli(['4', '6'])
+        for name in ('CT_reference', 'k_theta_per_deg', 'theta_reference_deg', 'reference_condition'):
+            self.assertIn(name, text)
+        self.assertIn('takeoff not simulated', text)
+        self.assertNotIn('CT = 0.0102', text)
+        denied, _, _, _ = self.run_cli(['4', '6'], ['--collective-config', str(self.fixture)])
+        self.assertIn('Illustrative parameters require explicit', denied)
+        self.assertIn('takeoff not simulated', denied)
+
+    def test_reject_inputs_and_reprompt(self):
+        flags = ['--collective-config', str(self.fixture), '--allow-illustrative-collective']
+        text, prompts, calls, _ = self.run_cli(['nan', 'inf', '21', '4', '6'], flags)
+        self.assertIn('finite number', text)
+        self.assertIn('outside provisional-software bounds', text)
+        self.assertEqual(prompts.call_count, 10)
+        self.assertEqual({call.args[3] for call in calls.call_args_list}, {4, 6})
+
+    def test_invalid_option_combinations(self):
+        for flags in (['--collective-config', str(self.fixture)],
+                      ['--allow-illustrative-collective'],
+                      ['--rotor-model', 'prototype-collective', '--prototype-ct', '.01']):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                tmpe.main(flags)
+
+
 if __name__ == '__main__':
     unittest.main()
