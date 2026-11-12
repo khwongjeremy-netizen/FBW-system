@@ -897,6 +897,38 @@ class TransitionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 tmpe.planar_force_balance(mass, 10, -4)
 
+    def test_formatted_report_preserves_values_and_state(self):
+        import copy
+        takeoff = self.takeoff()
+        result = tmpe.sample_nacelle_transition(takeoff, [(90, 90), (45, 45), (0, 0)])
+        before = copy.deepcopy(result)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            tmpe.report_transition(result)
+        text = output.getvalue()
+        self.assertEqual(result, before)
+        self.assertNotIn('TransitionState(', text)
+        self.assertEqual(text.count('--- Model limitations ---'), 1)
+        self.assertEqual(text.count('--- Transition configuration ---'), 3)
+        for angle in (90, 45, 0):
+            self.assertIn(f'{"LEFT NACELLE ANGLE":<23}: {angle:.2f}°', text)
+            self.assertIn(f'{"RIGHT NACELLE ANGLE":<23}: {angle:.2f}°', text)
+        for label, value, unit in (
+            ('STARTING ALTITUDE', takeoff['motion']['height_agl_m'], 'm'),
+            ('STARTING VERTICAL SPEED', takeoff['motion']['vertical_velocity_mps'], 'm/s'),
+            ('STARTING FORWARD SPEED', 0, 'm/s'),
+            ('ELAPSED SIMULATION TIME', takeoff['elapsed_s'], 's'),
+        ):
+            self.assertIn(f'{label:<23}: {value:.2f} {unit}', text)
+        for sample in result['samples']:
+            self.assertIn(f'{"TOTAL UPWARD THRUST":<23}: {sample["upward_rotor_force_n"]:.2f} N', text)
+            self.assertIn(f'{"TOTAL FORWARD THRUST":<23}: {sample["forward_rotor_force_n"]:.2f} N', text)
+        for label in ('WING LIFT', 'AERODYNAMIC DRAG', 'NET FORWARD FORCE',
+                      'NET VERTICAL FORCE', 'FORWARD ACCELERATION', 'VERTICAL ACCELERATION'):
+            self.assertEqual(text.count(f'{label:<23}: UNAVAILABLE'), 3)
+        self.assertEqual(text.count(f'{"SIMULATED TIME":<23}: 5.00 s'), 3)
+        self.assertEqual(text.count(f'{"TRAJECTORY":<23}: NOT SIMULATED'), 3)
+
     def test_cli_reporting_and_invalid_schedule(self):
         output = io.StringIO()
         with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
@@ -904,9 +936,10 @@ class TransitionTests(unittest.TestCase):
         text = output.getvalue()
         self.assertLess(text.index('PHASE 1 — HELICOPTER TAKEOFF'), text.index('PHASE 2 — NACELLE TRANSITION'))
         self.assertLess(text.index('Simulated time'), text.index('PHASE 2 — NACELLE TRANSITION'))
-        self.assertIn('45 / 30 deg', text)
-        self.assertIn('trajectory prediction BLOCKED', text)
-        self.assertIn('unknown, not zero', text)
+        self.assertIn('LEFT NACELLE ANGLE     : 45.00°', text)
+        self.assertIn('RIGHT NACELLE ANGLE    : 30.00°', text)
+        self.assertIn('Trajectory prediction BLOCKED', text)
+        self.assertIn('unavailable, not zero', text)
         for value in ('91:0', 'nan:45', '45', '45:30:0', 'bad:0'):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 tmpe.main(['--nacelle-schedule', value])

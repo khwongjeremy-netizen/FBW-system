@@ -1111,27 +1111,55 @@ def sample_nacelle_transition(takeoff_result, angle_pairs):
 
 def report_transition(result):
     print('\nPHASE 2 — NACELLE TRANSITION')
-    print('ILLUSTRATIVE FORCE DECOMPOSITION ONLY; untimed angle schedule, not a validated XV-15 conversion procedure.')
-    print('Provisional software angle range: 0–90 deg; 90 helicopter / 0 airplane. Aircraft assumed level.')
-    print('Starting aircraft state (retained Phase 1 values; altitude is AGL):')
-    print(result['starting_state'])
-    print(f"Rotor model: {result['rotor_model']}; held final thrust magnitudes, no transition calibration or inflow correction.")
-    print('Existing rotor calibration limitations and explicit Phase 1 exclusions still apply.')
     state = result['starting_state']
+    print('\n--- Initial aircraft state ---')
+    for label, value, unit in (
+        ('STARTING ALTITUDE', state.height_agl_m, 'm'),
+        ('STARTING VERTICAL SPEED', state.vertical_velocity_mps, 'm/s'),
+        ('STARTING FORWARD SPEED', state.forward_velocity_mps, 'm/s'),
+        ('ELAPSED SIMULATION TIME', state.elapsed_s, 's'),
+    ):
+        print(f'{label:<23}: {format_quantity(value, unit)}')
     for sample in result['samples']:
-        print(f"Nacelles L/R: {sample['left_nacelle_angle_deg']:g} / {sample['right_nacelle_angle_deg']:g} deg")
+        print('\n--- Transition configuration ---')
+        for label, key in (('LEFT NACELLE ANGLE', 'left_nacelle_angle_deg'),
+                           ('RIGHT NACELLE ANGLE', 'right_nacelle_angle_deg')):
+            print(f'{label:<23}: {format_number(sample[key])}°')
+        print('\n--- Rotor performance ---')
         for label, value in (
-            ('Left rotor thrust', state.left_proprotor_thrust_n),
-            ('Right rotor thrust', state.right_proprotor_thrust_n),
-            ('Upward rotor force', sample['upward_rotor_force_n']),
-            ('Forward rotor force', sample['forward_rotor_force_n']),
-            ('Aircraft weight', result['aircraft_weight_n'])):
-            print(f'  {label}: {format_quantity(value, "N")}')
-        print(f"  Wing lift: {sample['wing_lift_status']}; Drag: {sample['drag_status']} (unknown, not zero)")
-    print('Missing aerodynamic dependencies: supported wing lift/drag coefficients, rotor inflow/advance-ratio performance,')
-    print('rotor/wing interference and other airframe loads; attitude/moment dynamics also required.')
-    print('Transition readiness: force geometry supported when thrust is available; trajectory prediction BLOCKED.')
-    print('No time or motion advanced; net forces and accelerations remain unavailable.')
+            ('LEFT PROPROTOR', state.left_proprotor_thrust_n),
+            ('RIGHT PROPROTOR', state.right_proprotor_thrust_n),
+            ('TOTAL UPWARD THRUST', sample['upward_rotor_force_n']),
+            ('TOTAL FORWARD THRUST', sample['forward_rotor_force_n']),
+        ):
+            print(f'{label:<23}: {format_quantity(value, "N")}')
+        print('\n--- Aircraft response ---')
+        print(f'{"AIRCRAFT WEIGHT":<23}: {format_quantity(result["aircraft_weight_n"], "N")}')
+        for label, status in (
+            ('WING LIFT', sample['wing_lift_status']),
+            ('AERODYNAMIC DRAG', sample['drag_status']),
+            ('NET FORWARD FORCE', 'UNAVAILABLE'),
+            ('NET VERTICAL FORCE', 'UNAVAILABLE'),
+            ('FORWARD ACCELERATION', 'UNAVAILABLE'),
+            ('VERTICAL ACCELERATION', 'UNAVAILABLE'),
+        ):
+            print(f'{label:<23}: {status}')
+        print('\n--- Simulation status ---')
+        print(f'{"TRANSITION STATUS":<23}: FORCE DECOMPOSITION ONLY')
+        print(f'{"TRAJECTORY":<23}: NOT SIMULATED')
+        print(f'{"SIMULATED TIME":<23}: {format_quantity(state.elapsed_s, "s")}')
+    print('\n--- Model limitations ---')
+    if result['rotor_model'] == 'prototype-collective':
+        print('Collective-pitch model: illustrative or uncalibrated; see Phase 1 calibration status.')
+    elif result['rotor_model'] == 'prototype-fixed-ct':
+        print('Fixed-CT model: illustrative assumption; not validated XV-15 performance.')
+    else:
+        print('Rotor model: see Phase 1 force availability and calibration status.')
+    print('Final rotor thrust held fixed during angle sampling; level aircraft assumed.')
+    print('Wing lift and drag unavailable, not zero; net forces and accelerations unavailable.')
+    print('Aerodynamic effects excluded: inflow corrections, rotor/wing interference and other airframe loads.')
+    print('Provisional angle range: 0–90°; untimed samples are not a validated conversion procedure.')
+    print('Trajectory prediction BLOCKED pending aerodynamic and attitude models; no time or motion advanced.')
 
 
 def report_takeoff(result):
