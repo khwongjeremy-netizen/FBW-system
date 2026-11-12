@@ -832,5 +832,85 @@ class DefaultCollectiveTests(unittest.TestCase):
         self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 9.81 m')
 
 
+class TransitionTests(unittest.TestCase):
+    def takeoff(self, **options):
+        return tmpe.simulate_takeoff(tmpe.Aircraft(), tmpe.Environment(),
+                                     rotor_model='prototype-fixed-ct', **options)
+
+    def test_cardinal_angles_and_individual_vector_magnitudes(self):
+        result = self.takeoff()
+        result['right_proprotor_thrust_n'] *= 2  # Unequal synthetic thrust fixture.
+        transition = tmpe.sample_nacelle_transition(result, [(90, 90), (0, 0), (45, 45), (90, 0)])
+        total = result['left_proprotor_thrust_n'] + result['right_proprotor_thrust_n']
+        vertical, horizontal, diagonal, mixed = transition['samples']
+        self.assertAlmostEqual(vertical['forward_rotor_force_n'], 0)
+        self.assertAlmostEqual(vertical['upward_rotor_force_n'], total)
+        self.assertAlmostEqual(horizontal['forward_rotor_force_n'], total)
+        self.assertAlmostEqual(horizontal['upward_rotor_force_n'], 0)
+        self.assertAlmostEqual(diagonal['forward_rotor_force_n'], total / math.sqrt(2))
+        self.assertAlmostEqual(diagonal['upward_rotor_force_n'], total / math.sqrt(2))
+        self.assertAlmostEqual(mixed['upward_rotor_force_n'], result['left_proprotor_thrust_n'])
+        self.assertAlmostEqual(mixed['forward_rotor_force_n'], result['right_proprotor_thrust_n'])
+        for row in transition['samples']:
+            for side in ('left', 'right'):
+                self.assertAlmostEqual(math.hypot(*row[side + '_force_body_n']),
+                                       result[side + '_proprotor_thrust_n'])
+        # Nonparallel rotors need not sum to the sum of thrust magnitudes.
+        self.assertLess(math.hypot(mixed['forward_rotor_force_n'], mixed['upward_rotor_force_n']), total)
+
+    def test_handoff_and_five_second_regression(self):
+        import copy
+        result = self.takeoff()
+        before = copy.deepcopy(result)
+        transition = tmpe.sample_nacelle_transition(result, [(45, 30)])
+        state = transition['starting_state']
+        self.assertEqual(result, before)
+        self.assertEqual(state, transition['final_state'])
+        self.assertEqual(state.height_agl_m, result['motion']['height_agl_m'])
+        self.assertEqual(state.vertical_velocity_mps, result['motion']['vertical_velocity_mps'])
+        self.assertEqual(state.elapsed_s, 5)
+        for side in ('left', 'right'):
+            self.assertEqual(getattr(state, side + '_proprotor_thrust_n'), result[side]['value'])
+            self.assertEqual(getattr(state, side + '_nacelle_angle_deg'), 90)
+        self.assertAlmostEqual(state.height_agl_m, .1808899003581349)
+        self.assertAlmostEqual(state.vertical_velocity_mps, 2 * .1808899003581349 / 5)
+        self.assertEqual(state.forward_velocity_mps, 0)
+        self.assertEqual(state.forward_distance_m, 0)
+        self.assertEqual(transition['trajectory_status'], 'BLOCKED')
+
+    def test_validation_missing_thrust_and_net_force_interface(self):
+        for angle in (-1, 91, float('nan'), float('inf'), True, '45'):
+            with self.assertRaises(ValueError):
+                tmpe.sample_nacelle_transition(self.takeoff(), [(angle, 90)])
+        result = self.takeoff()
+        result['left_proprotor_thrust_n'] = None
+        row = tmpe.sample_nacelle_transition(result, [(45, 0)])['samples'][0]
+        self.assertIsNone(row['upward_rotor_force_n'])
+        self.assertIsNone(row['forward_rotor_force_n'])
+        self.assertEqual(row['wing_lift_status'], 'UNAVAILABLE')
+        self.assertEqual(row['drag_status'], 'UNAVAILABLE')
+        self.assertEqual(tmpe.planar_force_balance(2, 10, -4),
+                         dict(forward_acceleration_mps2=5, vertical_acceleration_mps2=-2))
+        self.assertIsNone(tmpe.planar_force_balance(2)['vertical_acceleration_mps2'])
+        self.assertIsNone(tmpe.planar_force_balance(None, 10, -4)['forward_acceleration_mps2'])
+        for mass in (0, -1, float('nan')):
+            with self.assertRaises(ValueError):
+                tmpe.planar_force_balance(mass, 10, -4)
+
+    def test_cli_reporting_and_invalid_schedule(self):
+        output = io.StringIO()
+        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+            tmpe.main(['--rotor-model', 'prototype-fixed-ct', '--nacelle-schedule', '90:90', '45:30', '0:0'])
+        text = output.getvalue()
+        self.assertLess(text.index('PHASE 1 — HELICOPTER TAKEOFF'), text.index('PHASE 2 — NACELLE TRANSITION'))
+        self.assertLess(text.index('Simulated time'), text.index('PHASE 2 — NACELLE TRANSITION'))
+        self.assertIn('45 / 30 deg', text)
+        self.assertIn('trajectory prediction BLOCKED', text)
+        self.assertIn('unknown, not zero', text)
+        for value in ('91:0', 'nan:45', '45', '45:30:0', 'bad:0'):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                tmpe.main(['--nacelle-schedule', value])
+
+
 if __name__ == '__main__':
     unittest.main()

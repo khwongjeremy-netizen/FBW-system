@@ -1035,6 +1035,105 @@ def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force
                                                        PROTOTYPE_EXCLUSIONS if prototype else None))
 
 
+@dataclass(frozen=True)
+class TransitionState:
+    """Level-plane handoff in SI: x forward, altitude/vertical velocity up positive.
+
+    Phase 1 has no horizontal motion. Phase 2A never advances this state.
+    Angles are nacelle tilt, independent of blade collective pitch.
+    """
+    height_agl_m: float
+    vertical_velocity_mps: float
+    elapsed_s: float
+    left_proprotor_thrust_n: float | None
+    right_proprotor_thrust_n: float | None
+    left_nacelle_angle_deg: float | None
+    right_nacelle_angle_deg: float | None
+    forward_velocity_mps: float = 0.0
+    forward_distance_m: float = 0.0
+
+
+def initialize_transition(takeoff_result):
+    """Copy the last retained Phase 1 state, including unsuccessful runs."""
+    r = takeoff_result
+    return TransitionState(r['motion']['height_agl_m'], r['motion']['vertical_velocity_mps'],
+                           r['elapsed_s'], r['left_proprotor_thrust_n'], r['right_proprotor_thrust_n'],
+                           r['nacelle_angle_deg'], r['nacelle_angle_deg'])
+
+
+def validate_transition_angle(angle):
+    """Provisional software range only; not XV-15 operational conversion limits."""
+    if isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle) or not 0 <= angle <= 90:
+        raise ValueError('Nacelle angle must be finite within provisional software range [0, 90] degrees')
+    return angle
+
+
+def planar_force_balance(mass_kg, forward_force_n=None, upward_force_n=None):
+    """Phase 2B interface: explicit NET forces, including gravity, in level axes.
+
+    Missing forces remain unknown. This algebra does not authorize trajectory
+    integration: aerodynamic validity and attitude dynamics still need a model.
+    """
+    if mass_kg is not None:
+        require_finite('Mass', mass_kg, 0)
+        if mass_kg == 0:
+            raise ValueError('Mass must be positive')
+    for force in (forward_force_n, upward_force_n):
+        if force is not None:
+            require_finite('Net force', force)
+    return dict(forward_acceleration_mps2=None if mass_kg is None or forward_force_n is None else forward_force_n / mass_kg,
+                vertical_acceleration_mps2=None if mass_kg is None or upward_force_n is None else upward_force_n / mass_kg)
+
+
+def sample_nacelle_transition(takeoff_result, angle_pairs):
+    """Untimed geometry samples with held Phase 1 thrust; never flight predictions.
+
+    No inflow, RPM, collective or airspeed correction is inferred while tilting.
+    Each pair is (left degrees, right degrees); no conversion rate is implied.
+    """
+    state = initialize_transition(takeoff_result)
+    samples = []
+    for left_angle, right_angle in angle_pairs:
+        validate_transition_angle(left_angle)
+        validate_transition_angle(right_angle)
+        left = rotor_force_body_n(state.left_proprotor_thrust_n, left_angle)
+        right = rotor_force_body_n(state.right_proprotor_thrust_n, right_angle)
+        samples.append(dict(left_nacelle_angle_deg=left_angle, right_nacelle_angle_deg=right_angle,
+                            left_force_body_n=left, right_force_body_n=right,
+                            forward_rotor_force_n=None if left is None or right is None else left[0] + right[0],
+                            upward_rotor_force_n=None if left is None or right is None else -left[2] - right[2],
+                            wing_lift_status='UNAVAILABLE', drag_status='UNAVAILABLE'))
+    mass = takeoff_result['takeoff_mass_kg']
+    return dict(starting_state=state, final_state=state, samples=samples,
+                aircraft_weight_n=None if mass is None else mass * G,
+                trajectory_status='BLOCKED', rotor_model=takeoff_result['rotor_model'])
+
+
+def report_transition(result):
+    print('\nPHASE 2 — NACELLE TRANSITION')
+    print('ILLUSTRATIVE FORCE DECOMPOSITION ONLY; untimed angle schedule, not a validated XV-15 conversion procedure.')
+    print('Provisional software angle range: 0–90 deg; 90 helicopter / 0 airplane. Aircraft assumed level.')
+    print('Starting aircraft state (retained Phase 1 values; altitude is AGL):')
+    print(result['starting_state'])
+    print(f"Rotor model: {result['rotor_model']}; held final thrust magnitudes, no transition calibration or inflow correction.")
+    print('Existing rotor calibration limitations and explicit Phase 1 exclusions still apply.')
+    state = result['starting_state']
+    for sample in result['samples']:
+        print(f"Nacelles L/R: {sample['left_nacelle_angle_deg']:g} / {sample['right_nacelle_angle_deg']:g} deg")
+        for label, value in (
+            ('Left rotor thrust', state.left_proprotor_thrust_n),
+            ('Right rotor thrust', state.right_proprotor_thrust_n),
+            ('Upward rotor force', sample['upward_rotor_force_n']),
+            ('Forward rotor force', sample['forward_rotor_force_n']),
+            ('Aircraft weight', result['aircraft_weight_n'])):
+            print(f'  {label}: {format_quantity(value, "N")}')
+        print(f"  Wing lift: {sample['wing_lift_status']}; Drag: {sample['drag_status']} (unknown, not zero)")
+    print('Missing aerodynamic dependencies: supported wing lift/drag coefficients, rotor inflow/advance-ratio performance,')
+    print('rotor/wing interference and other airframe loads; attitude/moment dynamics also required.')
+    print('Transition readiness: force geometry supported when thrust is available; trajectory prediction BLOCKED.')
+    print('No time or motion advanced; net forces and accelerations remain unavailable.')
+
+
 def report_takeoff(result):
     balance, motion = result['balance'], result['motion']
     if result.get('rotor_model') == 'prototype-fixed-ct':
@@ -1129,7 +1228,18 @@ def main(argv=None):
     parser.add_argument('--prototype-ct', type=float, help='assumed CT override for both prototype rotors')
     parser.add_argument('--collective-config', type=Path, help='collective model JSON; default: data(v.2)/collective_model.json')
     parser.add_argument('--allow-illustrative-collective', action='store_true', help='opt in to illustrative collective math tests; NOT aircraft predictions')
+    parser.add_argument('--nacelle-schedule', nargs='+', default=['90:90', '45:45', '0:0'],
+                        metavar='LEFT:RIGHT', help='untimed illustrative angle pairs in degrees; provisional range 0–90')
     args = parser.parse_args(argv)
+    try:
+        angle_pairs = [tuple(map(float, pair.split(':'))) for pair in args.nacelle_schedule]
+        for pair in angle_pairs:
+            if len(pair) != 2:
+                raise ValueError('Each nacelle sample must be LEFT:RIGHT')
+            for angle in pair:
+                validate_transition_angle(angle)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.rotor_model != 'prototype-collective' and (args.collective_config is not None or args.allow_illustrative_collective):
         parser.error('collective options require --rotor-model prototype-collective')
     if args.prototype_ct is not None:
@@ -1220,7 +1330,10 @@ def main(argv=None):
                                   allow_illustrative=args.allow_illustrative_collective)
     result = simulate_takeoff(aircraft, environment, args.duration, args.dt,
                               rotor_model=args.rotor_model, ct_override=args.prototype_ct, **collective_options)
+    print('\nPHASE 1 — HELICOPTER TAKEOFF')
     report_takeoff(result)
+    transition = sample_nacelle_transition(result, angle_pairs)
+    report_transition(transition)
     if args.ideal_rated_hover:
         report_rated_ideal_hover(aircraft, environment)
     if args.diagnostics or args.verbose:
