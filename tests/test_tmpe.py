@@ -629,5 +629,94 @@ class GroundStartTests(unittest.TestCase):
         self.assertIn('TAKEOFF STATUS         : AIRBORNE', text)
 
 
+class CollectiveModelTests(unittest.TestCase):
+    # Arbitrary algebra fixtures, never aircraft calibration data.
+    def model(self, **changes):
+        parameters = dict(CT_reference=.02, k_theta_per_deg=.001,
+                          theta_reference_deg=4, parameter_status='illustrative',
+                          source='Synthetic unit-test fixture',
+                          reference_condition='Arbitrary mathematical test only',
+                          pitch_bounds=dict(minimum_deg=-10, maximum_deg=20,
+                                            basis='provisional-software', source='Test bounds'))
+        parameters.update(changes)
+        return tmpe.LinearCollectiveModel(parameters)
+
+    def rotor(self, theta, side='left', model=None, **kwargs):
+        return tmpe.calculate_proprotor(side, tmpe.Aircraft(), tmpe.Environment(),
+            rotor_model='linear-collective', collective_deg=theta,
+            ct_model=model or self.model(), allow_illustrative=True, **kwargs)
+
+    def test_reference_slope_and_independent_rotors(self):
+        model = self.model()
+        self.assertIsNone(model.evaluate(4)['value'])
+        self.assertEqual(model.evaluate(4, allow_illustrative=True)['value'], .02)
+        left, right = self.rotor(4), self.rotor(6, 'right')
+        self.assertAlmostEqual(right['thrust_coefficient'], .022)
+        self.assertAlmostEqual(right['value'] / left['value'], 1.1)
+        self.assertEqual(self.rotor(4)['value'], left['value'])
+        self.assertEqual(left['experimental_validation_status'], 'NOT VALIDATED')
+        self.assertIn('MATHEMATICAL TEST ONLY', left['calibration_status'])
+        self.assertEqual((left['side'], right['side']), ('left', 'right'))
+
+    def test_uncalibrated_configuration_and_fixed_model_preserved(self):
+        model = tmpe.LinearCollectiveModel.load()
+        row = model.evaluate(10)
+        self.assertIsNone(row['value'])
+        self.assertIn('CT_reference', row['reason'])
+        self.assertEqual(row['calibration_status'], 'UNCALIBRATED')
+        self.assertIsNone(self.rotor(10, model=model)['value'])
+        aircraft = tmpe.Aircraft()
+        fixed = tmpe.calculate_proprotor('left', aircraft, tmpe.Environment(), rotor_model='prototype-fixed-ct')
+        self.assertAlmostEqual(fixed['value'], 28956.106644071755)
+
+    def test_finite_inputs_bounds_and_negative_ct(self):
+        for value in (None, True, '4', float('nan'), float('inf'), -11, 21):
+            self.assertIsNone(self.rotor(value)['value'])
+        for value in (-10, 20):
+            self.assertIsNotNone(self.rotor(value)['value'])
+        self.assertIsNone(self.rotor(-10, model=self.model(k_theta_per_deg=.01))['value'])
+        for key in ('CT_reference', 'k_theta_per_deg', 'theta_reference_deg'):
+            for value in (None, float('inf'), 'bad'):
+                self.assertIsNone(self.rotor(4, model=self.model(**{key: value}))['value'])
+        self.assertIsNone(self.rotor(4, model=self.model(pitch_bounds={}))['value'])
+        documented = self.model(pitch_bounds=dict(minimum_deg=3, maximum_deg=5,
+                                                 basis='documented', source='Synthetic limit'))
+        self.assertIsNone(self.rotor(6, model=documented)['value'])
+
+    def test_zero_and_physical_scaling(self):
+        aircraft, env = tmpe.Aircraft(), tmpe.Environment()
+        def evaluate():
+            return tmpe.calculate_collective_proprotor('left', aircraft, env, 4, self.model(), allow_illustrative=True)
+        baseline = evaluate()['value']
+        env.air_density *= 2
+        self.assertAlmostEqual(evaluate()['value'], 2 * baseline)
+        aircraft.hover_rotor_rpm *= 2
+        self.assertAlmostEqual(evaluate()['value'], 8 * baseline)
+        aircraft.hover_rotor_rpm = 0
+        self.assertEqual(evaluate()['value'], 0)
+        self.assertEqual(self.rotor(4, model=self.model(CT_reference=0))['value'], 0)
+        env.air_density = -1
+        self.assertIsNone(evaluate()['value'])
+
+    def test_configuration_file_errors_and_loading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'model.json'
+            self.assertIsNone(tmpe.LinearCollectiveModel.load(path).evaluate(4)['value'])
+            path.write_text('{')
+            self.assertIsNone(tmpe.LinearCollectiveModel.load(path).evaluate(4)['value'])
+            import json
+            path.write_text(json.dumps(self.model().parameters))
+            self.assertEqual(tmpe.LinearCollectiveModel.load(path).evaluate(4, allow_illustrative=True)['value'], .02)
+
+    def test_replacement_interface(self):
+        class MeasuredCurveAdapter:
+            def evaluate(self, theta, *, allow_illustrative=False):
+                return dict(value=.03, status='CALCULATED', reason='Synthetic adapter',
+                            calibration_status='TEST', experimental_validation_status='NOT VALIDATED')
+        row = self.rotor(4, model=MeasuredCurveAdapter())
+        self.assertEqual(row['thrust_coefficient'], .03)
+        self.assertAlmostEqual(row['value'], self.rotor(4)['value'] * 1.5)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -211,3 +211,6 @@ argv              = Command-line arguments supplied to main(); None uses the
 verbose           = Option enabled by -v or --verbose (args.verbose).
 ============================================================
 ```
+
+
+Collective-pitch extension: see [TMPE_COLLECTIVE_MODEL.md](TMPE_COLLECTIVE_MODEL.md) for configuration, unavailable calibration parameters, API usage and validation status.

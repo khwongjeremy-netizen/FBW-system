@@ -26,6 +26,7 @@
 
 from pathlib import Path
 import argparse
+import json
 import xml.etree.ElementTree as ET
 import math
 from dataclasses import dataclass
@@ -621,7 +622,104 @@ def rotor_force_body_n(thrust_n, nacelle_angle_deg):
     return (thrust_n * math.cos(angle), 0.0, -thrust_n * math.sin(angle))
 
 
-def calculate_proprotor(side, aircraft, environment, *, rotor_model='unsupported', ct_override=None):
+
+@dataclass(frozen=True)
+class LinearCollectiveModel:
+    """Configuration-backed local CT law. evaluate(theta) is the replacement interface.
+
+    A future measured curve/BEMT adapter can implement evaluate(theta) and return
+    the same value/status/reason plus validation metadata without changing forces.
+    """
+    parameters: dict
+
+    @classmethod
+    def load(cls, path=None):
+        path = Path(path) if path is not None else DATA_DIR / 'collective_model.json'
+        try:
+            parameters = json.loads(path.read_text())
+            if not isinstance(parameters, dict):
+                raise ValueError('Configuration must be an object')
+            return cls(dict(parameters, configuration_source=str(path)))
+        except (OSError, ValueError) as error:
+            return cls({'load_error': str(error), 'configuration_source': str(path)})
+
+    def evaluate(self, theta, *, allow_illustrative=False):
+        p = self.parameters
+        metadata = dict(model='linear-collective',
+                        calibration_status='UNCALIBRATED',
+                        experimental_validation_status='NOT VALIDATED',
+                        configuration_source=p.get('configuration_source'),
+                        source=p.get('source'), condition=p.get('reference_condition'),
+                        theta_deg=theta)
+
+        def fail(reason):
+            return dict(unavailable(reason), **metadata)
+
+        def finite(value):
+            return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+        if not finite(theta):
+            return fail('Pilot collective must be a finite number in degrees')
+        if p.get('load_error'):
+            return fail('UNCALIBRATED: configuration unavailable: ' + p['load_error'])
+        bounds = p.get('pitch_bounds', {})
+        if not isinstance(bounds, dict):
+            return fail('Invalid pitch bounds configuration')
+        lo, hi = bounds.get('minimum_deg'), bounds.get('maximum_deg')
+        basis = bounds.get('basis')
+        if (not finite(lo) or not finite(hi) or lo >= hi or
+                basis not in ('documented', 'provisional-software') or not bounds.get('source')):
+            return fail('Finite, sourced pitch bounds and documented/provisional-software basis required')
+        metadata.update(pitch_bounds=dict(bounds))
+        if not lo <= theta <= hi:
+            return fail(f'Collective outside {basis} bounds [{lo}, {hi}] deg')
+        names = ('CT_reference', 'k_theta_per_deg', 'theta_reference_deg')
+        missing = [name for name in names if p.get(name) is None]
+        if missing:
+            return fail('UNCALIBRATED: missing ' + ', '.join(missing))
+        if any(not finite(p[name]) for name in names):
+            return fail('UNCALIBRATED: model parameters must be finite numbers')
+        if p['CT_reference'] < 0 or not lo <= p['theta_reference_deg'] <= hi:
+            return fail('Invalid reference CT or reference pitch outside model bounds')
+        if not p.get('source') or not p.get('reference_condition'):
+            return fail('UNCALIBRATED: parameter source and reference condition required')
+        kind = p.get('parameter_status')
+        if kind == 'illustrative':
+            if not allow_illustrative:
+                return fail('Illustrative parameters require explicit mathematical-test opt-in')
+            metadata.update(calibration_status='ILLUSTRATIVE — MATHEMATICAL TEST ONLY')
+        elif kind == 'calibrated':
+            metadata.update(calibration_status='CALIBRATED — EXPERIMENTAL VALIDATION SEPARATE')
+        else:
+            return fail('UNCALIBRATED: parameter_status must establish calibrated or illustrative data')
+        ct = p['CT_reference'] + p['k_theta_per_deg'] * (theta - p['theta_reference_deg'])
+        if not math.isfinite(ct) or ct < 0:
+            return fail('Linear approximation produced negative/nonfinite CT; no extrapolated thrust available')
+        return dict(calculated(ct, 'CT = CT_reference + k_theta * (theta - theta_reference)'), **metadata)
+
+
+def calculate_collective_proprotor(side, aircraft, environment, theta, model=None, *, allow_illustrative=False):
+    """Evaluate each side separately, then connect supported CT to the existing SI thrust law."""
+    if side not in ('left', 'right'):
+        raise ValueError('Proprotor side must be left or right')
+    coefficient = (model if model is not None else LinearCollectiveModel.load()).evaluate(
+        theta, allow_illustrative=allow_illustrative)
+    metadata = dict(coefficient, side=side, thrust_coefficient=coefficient['value'])
+    if coefficient['value'] is None:
+        return metadata
+    thrust = calculate_fixed_ct_proprotor(side, aircraft, environment, ct_override=coefficient['value'])
+    # Preserve force-law availability and SI inputs, replace fixed-CT provenance.
+    for key in ('value', 'status', 'reason'):
+        metadata.pop(key)
+    thrust.update(metadata, label='LOCAL COLLECTIVE APPROXIMATION — ' + coefficient['calibration_status'],
+                  source_status=coefficient['calibration_status'],
+                  assumptions=('Local pitch response only; fixed RPM. No inflow, stall, power limits, '
+                               'ground effect, interference, wind response or realistic climb prediction.'))
+    return thrust
+
+
+def calculate_proprotor(side, aircraft, environment, *, rotor_model='unsupported', ct_override=None,
+                       collective_deg=None, ct_model=None, allow_illustrative=False):
     """Evaluate one real-rotor model's readiness; never infer thrust from rating.
 
     RPM, diameter and engine rating do not establish collective, mast power or
@@ -631,6 +729,13 @@ def calculate_proprotor(side, aircraft, environment, *, rotor_model='unsupported
     """
     if side not in ('left', 'right'):
         raise ValueError('Proprotor side must be left or right')
+    if rotor_model == 'linear-collective':
+        if ct_override is not None:
+            raise ValueError('CT override requires prototype-fixed-ct mode')
+        return calculate_collective_proprotor(side, aircraft, environment, collective_deg, ct_model,
+                                             allow_illustrative=allow_illustrative)
+    if collective_deg is not None or ct_model is not None:
+        raise ValueError('Collective inputs require linear-collective mode')
     if rotor_model == 'prototype-fixed-ct':
         return calculate_fixed_ct_proprotor(side, aircraft, environment, ct_override=ct_override)
     if rotor_model != 'unsupported':

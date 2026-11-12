@@ -1,0 +1,94 @@
+# Configurable collective-pitch model
+
+The local approximation is `CT(theta) = CT_reference + k_theta_per_deg * (theta - theta_reference_deg)`.
+CT is dimensionless, theta and theta_reference are in degrees, and k_theta is CT per degree.
+The equation contains no aircraft coefficients. Parameters and limits load from
+`MY_physics_engine/data(v.2)/collective_model.json` using `LinearCollectiveModel.load()`.
+An alternate JSON path can be supplied for isolated calibration or mathematical tests.
+
+The shipped model is **UNCALIBRATED / UNAVAILABLE**. All three calibration parameters
+are null. It never associates the existing fixed CT of 0.0102 with 10 degrees or any
+other pitch. No fallback to the fixed coefficient occurs when collective is requested.
+The existing fixed-CT implementation and CLI default remain unchanged.
+
+## Parameter evidence and missing data
+
+| Parameter | Repository state | Needed evidence |
+| --- | --- | --- |
+| CT_reference | Missing for collective model | Measured per-rotor thrust at a documented pitch and operating condition, with density, radius and RPM to calculate CT |
+| theta_reference_deg | Missing | Actual collective at the same thrust measurement; pitch datum, blade radial station and control calibration |
+| k_theta_per_deg | Missing | At least two paired CT/pitch points at the same condition; preferably a curve with uncertainties to fit and assess a local slope |
+| Pitch operating interval | Aircraft limits missing | Documented mechanical limits and aerodynamic validity interval for the fitted curve |
+| Reference condition | Missing | RPM, density, inflow/advance ratio, climb rate, height/ground effect, nacelle angle and rotor/airframe configuration |
+| Fixed-model CT | 0.0102 illustrative equilibrium assumption | No known pitch pairing; cannot serve as collective calibration |
+| Diameter / hover RPM | Existing XML reports 25 ft / 565 design RPM | These permit SI thrust conversion, but do not establish pitch sensitivity or measured rotor performance |
+
+Configuration requires a source, reference condition, all three finite model parameters,
+a parameter_status of `calibrated` or `illustrative`, and sourced pitch bounds. Bounds
+must identify their basis as `documented` or `provisional-software`. The shipped
+[-30, 30] degree interval is solely a provisional software input guard chosen for
+this implementation. It is neither a known XV-15 limit nor a calibrated validity
+range and does not make the unavailable model usable. Replace it with the documented
+intersection of the aircraft operating limits and local fit interval when available.
+The ±12 degree flapping limits in rotor.xml describe flapping, not collective travel.
+
+`calibrated` records the configuration author's calibration assertion; it does not
+assert independent experimental validation. A dataset should identify source/table,
+units, CT convention, fit method and uncertainty in its source/reference-condition
+metadata. A measured curve should be used instead of a linear fit outside a supported
+local interval. Negative/nonfinite calculated CT is unavailable rather than clamped.
+Zero CT and zero RPM give zero thrust; negative-thrust operation is outside this model.
+
+## API and simulation connection
+
+```python
+model = LinearCollectiveModel.load()
+left = calculate_proprotor(
+    'left', aircraft, environment, rotor_model='linear-collective',
+    collective_deg=left_pitch_deg, ct_model=model)
+right = calculate_proprotor(
+    'right', aircraft, environment, rotor_model='linear-collective',
+    collective_deg=right_pitch_deg, ct_model=model)
+```
+
+Each call evaluates its own pilot input; each rotor may use a different model instance
+or configuration. Inputs must be finite numeric degrees, including on an uncalibrated
+model, and must satisfy the configured bounds. Missing/malformed data yield None with
+an explicit reason, never a thrust prediction. No collective CLI mode is enabled.
+
+Supported CT feeds the existing independent per-rotor SI equation:
+`T = CT * rho * A * (Omega * R)**2`, where `A = pi*R**2`,
+`R = diameter_ft*0.3048/2` and `Omega = RPM*2*pi/60`.
+It does not infer engine, shaft or induced power.
+
+For simulation, the existing `simulate_takeoff(..., force_provider=provider)` extension
+accepts a function `(time, height, upward_velocity)` returning
+`left_proprotor_thrust_n`, `right_proprotor_thrust_n`, and `other_vertical_force_n`.
+That function can call the two rotor evaluations above and pass their `value` fields;
+unavailable values stop integration. Other forces must be explicitly established or
+explicitly excluded by the caller; the new collective API does not silently zero them.
+This keeps force balance, integration and the working fixed-CT takeoff path unchanged.
+
+A future curve or BEMT adapter implements `evaluate(theta, *, allow_illustrative=False)`
+and returns `value` (CT or None), `status`, `reason`, `calibration_status`, and
+`experimental_validation_status`. `calculate_collective_proprotor` accepts that adapter
+through `model` (or dispatch's `ct_model`) without changing the simulation. A richer
+adapter can capture RPM, inflow and other operating inputs in its own context.
+
+## Verification and validation
+
+Illustrative configurations require `parameter_status: illustrative` and explicit
+`allow_illustrative=True`; results carry **ILLUSTRATIVE — MATHEMATICAL TEST ONLY**.
+Arbitrary coefficients exist only in automated test fixtures, never in shipped aircraft
+configuration. These tests establish algebra, reference identity, slope, thrust coupling,
+independent inputs, finite-input rejection, bounds, zero thrust, negative CT rejection,
+and density/RPM scaling. Existing fixed-CT regression tests continue to pass.
+Run `python3 -m unittest discover -s tests -q`.
+
+Experimental validation is separately reported as **NOT VALIDATED**, even when a
+configuration asserts calibration. Calibration requires paired rotor measurements;
+validation requires independent holdout rotor/flight measurements, uncertainty and
+residual analysis over the intended envelope. Neither mathematical test success nor
+an equilibrium constructed using 0.0102 validates XV-15 performance. The local model
+omits inflow response, stall, power/torque limits, ground effect, interference and wind;
+it cannot establish realistic takeoff or climb performance.

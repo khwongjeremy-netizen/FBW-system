@@ -1,0 +1,15 @@
+{
+  "model": "linear-collective",
+  "parameter_status": "uncalibrated",
+  "CT_reference": null,
+  "k_theta_per_deg": null,
+  "theta_reference_deg": null,
+  "source": "Repository data audit: no paired collective/thrust measurements supplied",
+  "reference_condition": null,
+  "pitch_bounds": {
+    "minimum_deg": -30.0,
+    "maximum_deg": 30.0,
+    "basis": "provisional-software",
+    "source": "TMPE software input guard only; not XV-15 mechanical, aerodynamic or flight limits"
+  }
+}
