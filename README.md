@@ -1,12 +1,12 @@
-# TMPE — XV-15 helicopter-mode vertical takeoff
+# TMPE — XV-15 Vertical Flight Physics Prototype
 
-- Educational prototype focused on the two proprotors lifting the aircraft vertically from the runway.
-- Starts stationary, level and on the ground, with nacelles at 90°. No runway acceleration or airplane takeoff model.
-- Loads mass, rotor geometry/RPM, engine ratings, aircraft configuration and citation records from XML.
-- Computes weight for the selected XML design-gross loading: 13,000 lb → 5,896.70 kg → 57,826.88 N at standard gravity.
-- Supports vertical force balance, ground support and time integration when explicit forces are supplied.
-- **Current aircraft run: UNAVAILABLE.** Rotor mast power, commanded collective and supported rotor thrust/torque maps are missing. No XV-15 takeoff trajectory is claimed.
+Educational Python project exploring XV-15 vertical takeoff.
 
+- **Built:** Cited XML aircraft data, vertical force balance, ground support and time integration with supplied forces.
+- **In progress:** Aircraft-specific rotor thrust modeling; takeoff simulation remains blocked by missing data and operating inputs.
+- **Scope:** Vertical motion only, starting stationary with nacelles at 90°.
+- **Validation:** Tests check software and equations; no validated XV-15 trajectory is claimed.
+- **Long-term goal:** Explore flight dynamics and control.
 ## Usage
 
 ```bash
