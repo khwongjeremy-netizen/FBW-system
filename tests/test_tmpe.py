@@ -935,11 +935,11 @@ class TransitionTests(unittest.TestCase):
         with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']), contextlib.redirect_stdout(output):
             tmpe.main(['--rotor-model', 'prototype-fixed-ct', '--nacelle-schedule', '90:90', '45:30', '0:0'])
         text = output.getvalue()
-        self.assertLess(text.index('PHASE 1 — HELICOPTER TAKEOFF'), text.index('PHASE 2 — NACELLE TRANSITION'))
-        self.assertLess(text.index('Simulated time'), text.index('PHASE 2 — NACELLE TRANSITION'))
+        self.assertLess(text.index('PHASE 1 — HELICOPTER TAKEOFF'), text.index('OPTIONAL NACELLE GEOMETRY SAMPLES'))
+        self.assertLess(text.index('Phase 1 elapsed'), text.index('OPTIONAL NACELLE GEOMETRY SAMPLES'))
         self.assertIn('LEFT NACELLE ANGLE     : 45.00°', text)
         self.assertIn('RIGHT NACELLE ANGLE    : 30.00°', text)
-        self.assertIn('Trajectory prediction BLOCKED', text)
+        self.assertIn('optional angle samples advance neither time nor motion', text)
         self.assertIn('unavailable, not zero', text)
         for value in ('91:0', 'nan:45', '45', '45:30:0', 'bad:0'):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -961,7 +961,8 @@ class TimedTransitionTests(unittest.TestCase):
         self.assertEqual(polar.coefficients(10), (1, .4))
         self.assertIsNone(polar.coefficients(-10.01))
         self.assertIsNone(polar.coefficients(10.01))
-        self.assertIn('SOURCED', polar.status)
+        self.assertEqual(polar.status, 'USER-SUPPLIED / UNVALIDATED')
+        self.assertEqual(polar.user_source, 'table reference')
         for content in (
             'alpha_rad,cl,cd\n-1,1,0.2\n1,1,0.2\n',
             'alpha_deg,cl,cd\n1,1,0.2\n1,1,0.2\n',
@@ -1028,7 +1029,7 @@ class TimedTransitionTests(unittest.TestCase):
         self.assertIsNone(result['rows'][0]['net_forward_n'])
         self.assertIn('outside table', result['reason'])
         no_polar = tmpe.simulate_transition(takeoff, aircraft, env, None, 1, .1, (0, 0))
-        self.assertIn('No usable wing CL/CD', no_polar['reason'])
+        self.assertIn('No polar CSV was supplied. Use --transition-polar PATH.', no_polar['reason'])
 
         takeoff['motion'].update(height_agl_m=1, vertical_velocity_mps=-2)
         env.windspeed = 0
@@ -1052,7 +1053,8 @@ class TimedTransitionTests(unittest.TestCase):
             polar_path.write_text('alpha_deg,cl,cd\n-180,0.5,0.25\n180,0.5,0.25\n')
             audit = Path(directory) / 'audit.csv'
             flags = ['--rotor-model', 'prototype-fixed-ct', '--transition-polar', str(polar_path),
-                     '--transition-audit', str(audit), '--transition-end', '45:90']
+                     '--transition-audit', str(audit), '--transition-end', '45:90',
+                     '--dt', '.01', '--polar-source', 'Pilot notes']
             with patch('builtins.input', side_effect=['', '', '0', '', '', '0', '5', 'inf', '.25']) as prompts:
                 with contextlib.redirect_stdout(output):
                     tmpe.main(flags)
@@ -1066,6 +1068,28 @@ class TimedTransitionTests(unittest.TestCase):
         self.assertEqual(rows[-1]['right_nacelle_deg'], '90.0')
         self.assertIn('ILLUSTRATIVE', rows[-1]['left_rotor_calibration'])
         self.assertEqual(rows[-1]['aero_status'], 'USER-SUPPLIED / UNVALIDATED')
+        self.assertEqual(rows[-1]['aero_user_source'], 'Pilot notes')
+        self.assertEqual(rows[-1]['aero_validation'], 'UNVALIDATED')
+        self.assertEqual(len(rows), 26)
+        report = output.getvalue()
+        headings = ('RUN SUMMARY', 'INPUTS', 'PHASE 1 — HELICOPTER TAKEOFF',
+                    'PHASE 2 — TIMED TRANSITION', 'FINAL STATE — PHASE 2', 'DATA STATUS AND BLOCKERS')
+        positions = [report.index(heading) for heading in headings]
+        self.assertEqual(positions, sorted(positions))
+        table = report.split('Checkpoints (nearest evaluated timesteps)\n')[1].split('— in checkpoints')[0]
+        self.assertEqual(len(table.strip().splitlines()), 6)  # Header plus five checkpoints.
+        self.assertIn('User-provided source metadata: Pilot notes', report)
+
+    def test_blocked_transition_reports_retained_phase1_state(self):
+        output = io.StringIO()
+        with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']):
+            with contextlib.redirect_stdout(output):
+                tmpe.main(['--rotor-model', 'prototype-fixed-ct'])
+        report = output.getvalue()
+        self.assertIn('Phase 2 elapsed: 0 / 2 s', report)
+        self.assertIn('FINAL STATE — PHASE 1 (RETAINED STATE)', report)
+        self.assertNotIn('FINAL STATE — PHASE 2', report)
+        self.assertNotIn('Checkpoints', report)
 
 
 if __name__ == '__main__':

@@ -31,10 +31,20 @@ If AoA is undefined or outside the supplied range, the simulation stops
 advancing and reports the condition. The lookup assumes one fixed wing polar
 throughout the conversion.
 
-The table is marked user-supplied and unvalidated unless `--polar-source`
-provides source metadata. In that case the audit records the supplied reference
-and labels it sourced. XV-15 validation is a separate question in either case.
-The program does not infer CL or CD from the XML curve descriptions.
+Every supplied table is marked USER-SUPPLIED / UNVALIDATED. The optional
+`--polar-source` text is stored as user-provided metadata, separately from
+validation status. The program does not infer CL or CD from curve descriptions.
+
+## Data availability
+
+| Input or result | Basis or blocker |
+| --- | --- |
+| Design gross mass, weight, wing geometry, nacelle setting | Existing XML. The program converts gross weight in pounds to mass in kg and calculates weight using standard gravity. [NASA TM-81244](https://ntrs.nasa.gov/api/citations/19810001546/downloads/19810001546.pdf) documents the design gross weight and nacelle convention. |
+| Wing CL/CD | Requires a CSV for this run. The configuration-dependent wing/pylon tables cited in [NASA CR-166536](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf) need their flow-angle, control-setting, reference-area and nacelle-angle definitions mapped before use. The [repository data-gap report](../TMPE_AERODYNAMIC_DATA_GAPS_REPORT.md) records the table locations and remaining mapping work. A generic airfoil polar cannot establish aircraft wing/pylon loads. |
+| Actual rotor thrust, power and collective calibration | The shipped collective calibration lacks matched pitch/thrust data and reference conditions. Design RPM, diameter and engine rating do not establish mast power or a takeoff/conversion thrust law. [NASA TM-86833](https://ntrs.nasa.gov/citations/19860005773) is a full-scale hover-test data lead with a different scope from conversion. |
+| Additional loads and attitude | Rotor/wing interference, other airframe loads, and attitude response are outside the implemented force model. |
+| Air density, temperature and elevation | The entered density is held constant and used for dynamic pressure and prototype rotor thrust. Temperature and ground elevation MSL are displayed as context. There is no atmosphere calculation. |
+
 
 ## Axes and force equations
 
@@ -75,8 +85,10 @@ performance map or establish a validated transition trajectory.
 
 ## Audit
 
-The console prints the equations, assumptions, per-step forces and both stage
-times. Evaluated rows are also saved to a unique `output/stage2_audit_*.csv`
+The console shows both stage times and up to five checkpoints, including the
+first and last evaluated states. Use `--verbose` to print the equations. When
+Phase 2 advances no time, the final state is explicitly attributed to Phase 1.
+All evaluated rows are saved to a unique `output/stage2_audit_*.csv`
 in the working directory. Use `--transition-audit` to choose a new file path.
 The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
 and aerodynamic provenance. Blank numerical cells represent unavailable

@@ -1093,6 +1093,7 @@ class TransitionPolar:
     rows: tuple
     source: str
     status: str
+    user_source: str | None = None
 
     @classmethod
     def load(cls, path, source=None):
@@ -1114,8 +1115,7 @@ class TransitionPolar:
                 rows.append((alpha, cl, cd))
         if len(rows) < 2:
             raise ValueError('Coefficient CSV requires at least two rows')
-        status = 'SOURCED (user metadata supplied)' if source else 'USER-SUPPLIED / UNVALIDATED'
-        return cls(tuple(rows), f'{path} | {source}' if source else str(path), status)
+        return cls(tuple(rows), str(path), 'USER-SUPPLIED / UNVALIDATED', source)
 
     def coefficients(self, alpha_deg):
         if not self.rows[0][0] <= alpha_deg <= self.rows[-1][0]:
@@ -1139,6 +1139,7 @@ def transition_wing_forces(state, aircraft, environment, polar):
                cl=None, cd=None, lift_n=None, drag_n=None, wing_forward_n=None, wing_up_n=None,
                air_density_kg_m3=environment.air_density, wing_area_m2=aircraft.wing_area_m2,
                wing_incidence_deg=aircraft.wing_incidence_deg, aero_source=polar.source,
+               aero_user_source=polar.user_source, aero_validation='UNVALIDATED',
                aero_status='UNAVAILABLE', aero_reason='')
     try:
         require_finite('Wind speed', environment.windspeed, 0)
@@ -1200,7 +1201,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
                             f"{takeoff['motion']['reason']}")
         return result
     if polar is None:
-        result['reason'] = 'No usable wing CL/CD table in repository XML. Supply --transition-polar.'
+        result['reason'] = 'No polar CSV was supplied. Use --transition-polar PATH.'
         return result
 
     starts = (state.left_nacelle_angle_deg, state.right_nacelle_angle_deg)
@@ -1278,9 +1279,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
     return result
 
 
-def report_timed_transition(result, audit_path=None):
-    print('\nPHASE 2 — TIMED TRANSITION')
-    print('Calculated from supplied inputs for software/model evaluation. XV-15 transition validation unavailable.')
+def report_transition_equations():
     print('Assumptions: level, facing north; forward/up positive; east wind excluded from the 2D flow.')
     print('Nacelles: independent linear ramps over requested duration, 0 deg forward / 90 deg up.')
     print('Rotor magnitudes held at Phase 1 values with original calibration status. Prototype T = CT rho A (Omega R)^2.')
@@ -1291,49 +1290,67 @@ def report_timed_transition(result, audit_path=None):
     print('Each rotor forward = T*cos(nacelle); up = T*sin(nacelle).')
     print('Net forward = rotor forward + wing forward; net up = rotor up + wing up - mass*g.')
     print('a = F_net/m; v_next = v + a*dt; position_next = position + v*dt + 0.5*a*dt².')
-    print('Excluded: rotor inflow/RPM response, power limits, ground effect, rotor/wing interference, '
-          'other airframe loads, lateral motion and attitude dynamics.')
-    rows = result['rows']
-    if rows:
-        first = rows[0]
-        print(f"Wing coefficient input: {first['aero_source']}")
-        for side in ('left', 'right'):
-            print(f"{side} rotor: {first[f'{side}_rotor_source']} | {first[f'{side}_rotor_calibration']}")
-        groups = (
-            ('t(s)', ('phase2_time_s',)),
-            ('nac L/R(deg)', ('left_nacelle_deg', 'right_nacelle_deg')),
-            ('V(m/s)', ('airspeed_mps',)), ('AoA(deg)', ('alpha_deg',)), ('q(Pa)', ('q_pa',)),
-            ('CL/CD', ('cl', 'cd')), ('L/D(N)', ('lift_n', 'drag_n')),
-            ('left rotor F/U(N)', ('left_rotor_forward_n', 'left_rotor_up_n')),
-            ('right rotor F/U(N)', ('right_rotor_forward_n', 'right_rotor_up_n')),
-            ('W(N)', ('aircraft_weight_n',)), ('net F/U(N)', ('net_forward_n', 'net_up_n')),
-            ('a F/U(m/s²)', ('forward_acceleration_mps2', 'vertical_acceleration_mps2')),
-        )
-        print(' | '.join(label for label, _ in groups) + ' | wing status')
-        for row in rows:
-            print(' | '.join('/'.join(format_number(row[key], 4) if row[key] is not None else '—'
-                                      for key in keys) for _, keys in groups)
-                  + ' | ' + row['aero_status'] + (': ' + row['aero_reason'] if row['aero_reason'] else ''))
-        try:
-            if audit_path is None:
-                output_dir = Path('output')
-                output_dir.mkdir(exist_ok=True)
-                stream = tempfile.NamedTemporaryFile(mode='w', newline='', encoding='utf-8',
-                    dir=output_dir, prefix='stage2_audit_', suffix='.csv', delete=False)
-            else:
-                stream = audit_path.open('x', newline='', encoding='utf-8')
-            with stream:
-                writer = csv.DictWriter(stream, fieldnames=list(first))
-                writer.writeheader()
-                writer.writerows(rows)
-            print(f'Stage 2 audit CSV: {stream.name}')
-        except OSError as exc:
-            print(f'Stage 2 audit CSV unavailable: {exc}')
-    state = result['final_state']
-    print(f"Phase 2 elapsed: {result['elapsed_s']:.6g} / {result['requested_s']:.6g} s")
+
+
+def report_timed_transition(result, audit_path=None):
+    print('\nPHASE 2 — TIMED TRANSITION')
     print(f"Phase 2 status: {result['status']} — {result['reason']}")
-    print(f'Final state: {state.height_agl_m:.4f} m AGL, {state.forward_distance_m:.4f} m forward, '
-          f'{state.forward_velocity_mps:.4f} m/s forward, {state.vertical_velocity_mps:.4f} m/s up.')
+    print(f"Phase 2 elapsed: {result['elapsed_s']:.6g} / {result['requested_s']:.6g} s")
+    rows = result['rows']
+    if not rows:
+        return
+
+    print('\nCheckpoints (nearest evaluated timesteps)')
+    columns = (
+        ('t (s)', 'phase2_time_s'), ('L tilt (°)', 'left_nacelle_deg'),
+        ('R tilt (°)', 'right_nacelle_deg'), ('Air (m/s)', 'airspeed_mps'),
+        ('AoA (°)', 'alpha_deg'), ('AGL (m)', 'height_agl_m'),
+        ('Fwd (m/s)', 'forward_velocity_mps'), ('Up (m/s)', 'vertical_velocity_mps'),
+    )
+    print(' '.join(f'{label:>11}' for label, _ in columns))
+    if len(rows) <= 5:
+        checkpoints = rows
+    else:
+        last_time = rows[-1]['phase2_time_s']
+        targets = (last_time * fraction for fraction in (.25, .5, .75))
+        checkpoints = [rows[0], *(min(rows, key=lambda row: abs(row['phase2_time_s'] - target))
+                                  for target in targets), rows[-1]]
+    for row in checkpoints:
+        print(' '.join(f'{format_number(row[key], 3):>11}' for _, key in columns))
+    print('— in checkpoints indicates unavailable data.')
+    try:
+        if audit_path is None:
+            output_dir = Path('output')
+            output_dir.mkdir(exist_ok=True)
+            stream = tempfile.NamedTemporaryFile(mode='w', newline='', encoding='utf-8',
+                dir=output_dir, prefix='stage2_audit_', suffix='.csv', delete=False)
+        else:
+            stream = audit_path.open('x', newline='', encoding='utf-8')
+        with stream:
+            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f'Stage 2 audit CSV ({len(rows)} rows): {stream.name}')
+    except OSError as exc:
+        print(f'Stage 2 audit CSV UNAVAILABLE — {exc}')
+
+
+def report_final_state(transition, takeoff):
+    state = transition['final_state'] if transition['elapsed_s'] > 0 else initialize_transition(takeoff)
+    if transition['elapsed_s'] > 0:
+        phase = 'PHASE 2' if transition['status'] != 'UNAVAILABLE' else 'PHASE 2 (LAST SIMULATED STATE)'
+    elif takeoff['elapsed_s'] > 0:
+        phase = 'PHASE 1 (RETAINED STATE)'
+    else:
+        phase = 'PHASE 1 (INITIAL STATE RETAINED)'
+    print(f'\nFINAL STATE — {phase}')
+    for label, value, unit in (
+        ('HEIGHT ABOVE GROUND', state.height_agl_m, 'm'),
+        ('FORWARD DISTANCE', state.forward_distance_m, 'm'),
+        ('FORWARD VELOCITY', state.forward_velocity_mps, 'm/s'),
+        ('VERTICAL VELOCITY', state.vertical_velocity_mps, 'm/s'),
+    ):
+        print(f'{label:<23}: {format_quantity(value, unit)}')
 
 
 def sample_nacelle_transition(takeoff_result, angle_pairs):
@@ -1361,7 +1378,7 @@ def sample_nacelle_transition(takeoff_result, angle_pairs):
 
 
 def report_transition(result):
-    print('\nPHASE 2 — NACELLE TRANSITION')
+    print('\nOPTIONAL NACELLE GEOMETRY SAMPLES')
     state = result['starting_state']
     print('\n--- Initial aircraft state ---')
     for label, value, unit in (
@@ -1410,28 +1427,11 @@ def report_transition(result):
     print('Wing lift and drag unavailable, not zero; net forces and accelerations unavailable.')
     print('Aerodynamic effects excluded: inflow corrections, rotor/wing interference and other airframe loads.')
     print('Provisional angle range: 0–90°; untimed samples are not a validated conversion procedure.')
-    print('Trajectory prediction BLOCKED pending aerodynamic and attitude models; no time or motion advanced.')
+    print('These optional angle samples advance neither time nor motion.')
 
 
 def report_takeoff(result):
     balance, motion = result['balance'], result['motion']
-    if result.get('rotor_model') == 'prototype-fixed-ct':
-        print('\n' + PROTOTYPE_LABEL)
-        print('Model: prototype-fixed-ct; CT source status: illustrative assumption, not verified XV-15 data.')
-        print(PROTOTYPE_EXCLUSIONS)
-        for side in ('left', 'right'):
-            row = result[side]
-            print(f"{side}: {row['source']} | {row['reason']}")
-            print(f"  Inputs: {row['inputs']}")
-    if result.get('rotor_model') == 'prototype-collective':
-        print('\nModel: prototype-collective')
-        print('CT(theta) = CT_reference + k_theta * (theta - theta_reference)')
-        print(COLLECTIVE_EXCLUSIONS)
-        for side in ('left', 'right'):
-            row = result[side]
-            print(f"{side}: pilot collective = {row.get('theta_deg')} deg; CT = {row.get('thrust_coefficient')}; {row['status']}")
-            print(f"  Collective calculation: {row['reason']}")
-            print(f"  Calibration: {row.get('calibration_status')}; experimental validation: {row.get('experimental_validation_status')}")
     print('\n--- Rotor performance ---')
     for label, value in (('LEFT PROPROTOR', result['left']['value']),
                          ('RIGHT PROPROTOR', result['right']['value']),
@@ -1443,8 +1443,6 @@ def report_takeoff(result):
         ('AIRCRAFT WEIGHT', balance.get('aircraft_weight_n'), 'N'),
         ('NET VERTICAL FORCE', balance.get('net_vertical_force_n'), 'N'),
         ('VERTICAL ACCEL.', motion['vertical_acceleration_mps2'], 'm/s²'),
-        ('VERTICAL VELOCITY', motion['vertical_velocity_mps'], 'm/s'),
-        ('HEIGHT ABOVE GROUND', motion['height_agl_m'], 'm'),
     ):
         print(f'{label:<23}: {format_quantity(value, unit, reason="force balance unavailable")}')
     if result.get('rotor_model') == 'prototype-fixed-ct' and balance.get('net_vertical_force_n') is not None:
@@ -1453,17 +1451,42 @@ def report_takeoff(result):
         if abs(margin_percent) < 1:
             print('Almost weight-balanced; no substantial takeoff margin. Any motion is a simplified mechanics result.')
     print(f"TAKEOFF STATUS         : {motion['takeoff_status']}")
-    print(f"Simulated time         : {result['elapsed_s']:.2f} s")
-    if motion['status'] != 'CALCULATED':
-        if result['elapsed_s'] == 0:
-            print('Initial state retained; takeoff not simulated. Initial velocity/height are not trajectory predictions.')
-        else:
-            print('Simulation stopped; last supported state retained. No motion predicted beyond this time.')
-        if result.get('rotor_model') in ('prototype-fixed-ct', 'prototype-collective'):
-            print('Blockers: ' + '; '.join(result[key]['reason'] for key in ('left', 'right', 'balance')))
-        else:
-            print('Blockers: rotor mast power, thrust performance maps and supported other vertical loads. See --diagnostics.')
-    print('Educational prototype; no validated XV-15 rotor performance model.')
+    print(f"Phase 1 force calculation: {motion['status']}")
+
+
+def report_data_status(takeoff, transition, aircraft, polar):
+    print('\nDATA STATUS AND BLOCKERS')
+    print('XV-15 flight validation: UNAVAILABLE for this model.')
+    for side in ('left', 'right'):
+        rotor = takeoff[side]
+        provenance = rotor.get('source_status') or rotor.get('calibration_status')
+        print(f"{side.title()} rotor: {rotor['status']}" + (f" — {provenance}" if provenance else ''))
+        if rotor.get('source'):
+            print(f"  Data source: {rotor['source']}")
+        if rotor['value'] is None:
+            print(f"  {rotor['reason']}")
+    if takeoff['motion']['status'] != 'CALCULATED':
+        print(f"Phase 1 blocker: {takeoff['balance']['reason']}")
+        if takeoff['elapsed_s'] == 0:
+            print('Phase 1 takeoff not simulated.')
+    if polar is None:
+        print('Wing polar: UNAVAILABLE — no polar CSV was supplied. Use --transition-polar PATH.')
+    else:
+        print(f'Wing polar: {polar.status} — {polar.source}')
+        if polar.user_source:
+            print(f'  User-provided source metadata: {polar.user_source}')
+    if transition['status'] == 'UNAVAILABLE' and (polar is not None or not transition['reason'].startswith('No polar CSV')):
+        print(f"Phase 2 blocker: {transition['reason']}")
+    elif transition['rows'] and transition['rows'][-1]['aero_reason']:
+        print(f"Last wing force evaluation: UNAVAILABLE — {transition['rows'][-1]['aero_reason']}")
+    for name in ('design_gross', 'nacelle_angle_deg', 'wing_area_ft2', 'wing_incidence_deg'):
+        record = aircraft.diagnostics[name]
+        if record['value'] is None:
+            print(f"{name}: UNAVAILABLE — {record['file']} :: {record['path']} — {record['reason']}")
+    print('Rotor mast power: UNAVAILABLE — commanded shaft power and power split are unknown.')
+    print('Phase 1 wing loads, ground effect and wind response: NOT MODELED.')
+    print('Phase 2 rotor inflow/RPM response, ground effect, rotor/wing interference, other airframe loads, '
+          'power limits, lateral motion and attitude dynamics: NOT MODELED.')
 
 
 def report_takeoff_diagnostics(result, verbose=False):
@@ -1493,6 +1516,44 @@ def report_takeoff_diagnostics(result, verbose=False):
         print('  Ground support = max(0, -F_net,up) while grounded and stationary.')
         print('  Constant-force integration: h += v dt + 0.5 a dt²; v += a dt; clamp ground crossings.')
         print('  No OGE 7% download or reported 93% efficiency is silently applied to runway liftoff.')
+
+
+def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, end_angles):
+    model = takeoff['rotor_model']
+    illustrative = any('ILLUSTRATIVE' in (takeoff[side].get('source_status') or
+                                          takeoff[side].get('calibration_status') or '')
+                       for side in ('left', 'right'))
+    print('\nRUN SUMMARY')
+    print('Scenario: XV-15 helicopter-mode vertical takeoff and nacelle transition.')
+    print('Initial state: on the ground, stationary, level, facing north.')
+    print(f'Model: {model}')
+    if illustrative:
+        print('Run type: ILLUSTRATIVE — MATHEMATICAL TEST ONLY; experimental validation: NOT VALIDATED')
+    else:
+        print('Run type: educational aircraft model; experimental validation: NOT VALIDATED')
+    print(f'Requested duration: Phase 1 {phase1_s:g} s | Phase 2 {phase2_s:g} s | timestep {dt:g} s')
+
+    print('\nINPUTS')
+    print(f'Air density: {environment.air_density:g} kg/m³ (scenario input; held constant)')
+    print(f'Wind: {environment.windspeed:g} m/s FROM {environment.winddirection:g}° clockwise from north')
+    print(f'Temperature: {environment.temperature:g} °C (display only)')
+    print(f'Ground elevation (MSL): {environment.altitude:.2f} m (display only)')
+    print(f'Design gross (XML): {format_quantity(aircraft.design_gross, "lb")}')
+    print(f'Wing area / incidence (XML): {format_quantity(aircraft.wing_area_m2, "m²")} / '
+          f'{format_quantity(aircraft.wing_incidence_deg, "°")}')
+    print(f'Phase 1 nacelles: {format_quantity(aircraft.nacelle_angle_deg, "°")} each')
+    print(f'Phase 2 nacelle targets (left/right): {end_angles[0]:g}° / {end_angles[1]:g}° (linear ramps)')
+    if model == 'prototype-collective':
+        for side in ('left', 'right'):
+            rotor = takeoff[side]
+            pitch = rotor.get('theta_deg')
+            ct = rotor.get('thrust_coefficient')
+            print(f'{side}: pilot collective = {format_quantity(pitch, "deg", places=1)}; '
+                  f'CT = {ct if ct is not None else "UNAVAILABLE"}')
+    elif model == 'prototype-fixed-ct':
+        print(PROTOTYPE_LABEL)
+        ct = takeoff['left']['inputs']['thrust_coefficient']
+        print(f'Fixed CT: {ct if ct is not None else "UNAVAILABLE"}; collective NOT MODELED.')
 
 
 def main(argv=None):
@@ -1548,15 +1609,13 @@ def main(argv=None):
     print('TMPE :: XV-15 HELICOPTER TAKEOFF')
     aircraft = Aircraft()
     state = AircraftState()
-    print('Scenario: XV-15 helicopter-mode vertical takeoff.')
-    print('Initial state: on the ground, stationary, level, facing north.')
-    print('MODE: HELICOPTER; nacelle angle:', format_quantity(aircraft.nacelle_angle_deg, '°', 1))
     print("\nEnter ground-level environmental conditions.")
 
     density = ask_float(
         "Air density (kg/m^3)",
         default=1.225,
-        minimum=0
+        minimum=0,
+        places=3
     )
 
     windspeed = ask_float(
@@ -1608,10 +1667,6 @@ def main(argv=None):
                     print('Please answer yes or no.')
             if args.allow_illustrative_collective:
                 model = LinearCollectiveModel.load(illustrative_path)
-                print('ILLUSTRATIVE — MATHEMATICAL TEST ONLY; experimental validation: NOT VALIDATED')
-        bounds = model.parameters.get('pitch_bounds')
-        print('\nCollective pitch bounds:', bounds)
-        print('Calibration source:', model.parameters.get('source'))
         pitches = {}
         for side in ('left', 'right'):
             while True:
@@ -1632,16 +1687,21 @@ def main(argv=None):
                 print('Enter a positive duration.')
         durations.append(duration)
     phase1_duration, phase2_duration = durations
-    print(f'Integration timestep: {args.dt:g} s (shortened at each stage endpoint).')
     result = simulate_takeoff(aircraft, environment, phase1_duration, args.dt,
                               rotor_model=args.rotor_model, ct_override=args.prototype_ct, **collective_options)
+    report_run_inputs(aircraft, environment, result, phase1_duration, phase2_duration, args.dt, end_angles)
     print('\nPHASE 1 — HELICOPTER TAKEOFF')
     report_takeoff(result)
     print(f"Phase 1 elapsed: {result['elapsed_s']:.6g} / {phase1_duration:.6g} s")
-    if angle_pairs:
-        report_transition(sample_nacelle_transition(result, angle_pairs))
     transition = simulate_transition(result, aircraft, environment, polar, phase2_duration, args.dt, end_angles)
     report_timed_transition(transition, args.transition_audit)
+    report_final_state(transition, result)
+    report_data_status(result, transition, aircraft, polar)
+    if angle_pairs:
+        report_transition(sample_nacelle_transition(result, angle_pairs))
+    if args.verbose:
+        print('\nTRANSITION EQUATIONS')
+        report_transition_equations()
     if args.ideal_rated_hover:
         report_rated_ideal_hover(aircraft, environment)
     if args.diagnostics or args.verbose:

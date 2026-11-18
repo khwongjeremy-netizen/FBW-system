@@ -19,7 +19,7 @@ python3 -m unittest discover -s tests -v
 
 - Python 3 standard library only; no dependencies to install.
 - The five environmental prompts have defaults. Enter separate positive durations for takeoff and transition, or supply both duration flags.
-- Normal output prioritizes rotor thrust, weight, net force and vertical state.
+- Normal output shows run inputs, Phase 1 forces, up to five Phase 2 checkpoints, the final state and data blockers. The Phase 2 audit CSV retains every evaluated timestep.
 - Diagnostics shows XML loading records and force-model blockers. Verbose adds equations and the secondary freestream AoA trace. Flags can be combined.
 - Duration and timestep are requested settings; missing forces stop the run without advancing time. Initial zero height/velocity are identified as initial conditions.
 
