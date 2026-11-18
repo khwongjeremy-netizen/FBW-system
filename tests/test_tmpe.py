@@ -1,3 +1,4 @@
+import csv
 """Kinematic sign/frame checks; no aircraft coefficient assumptions."""
 import contextlib
 import io
@@ -195,7 +196,7 @@ class LoadingDiagnosticsTests(unittest.TestCase):
 class DiagnosticReportTests(unittest.TestCase):
     def run_main(self, flags):
         output = io.StringIO()
-        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']), contextlib.redirect_stdout(output):
             tmpe.main(['--rotor-model', 'prototype-fixed-ct'] + flags)
         return output.getvalue()
 
@@ -424,7 +425,7 @@ class IdealHoverTests(unittest.TestCase):
 
     def test_opt_in_report_keeps_takeoff_unavailable(self):
         output = io.StringIO()
-        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']), contextlib.redirect_stdout(output):
             tmpe.main(['--ideal-rated-hover', '--diagnostics', '--rotor-model', 'unsupported'])
         text = output.getvalue()
         self.assertIn('NOT XV-15 PREDICTIONS', text)
@@ -585,14 +586,14 @@ class FixedCTPrototypeTests(unittest.TestCase):
             self.assertTrue(all(row['height_agl_m'] >= 0 for row in result['history']))
         self.assertEqual(thrusts, sorted(thrusts))
         output = io.StringIO()
-        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']), contextlib.redirect_stdout(output):
             tmpe.main(['--rotor-model', 'prototype-fixed-ct'])
         self.assertIn(tmpe.PROTOTYPE_LABEL, output.getvalue())
         self.assertIn('TAKEOFF STATUS         : AIRBORNE', output.getvalue())
 
     def test_cli_labels_and_override_validation(self):
         output = io.StringIO()
-        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']), contextlib.redirect_stdout(output):
             tmpe.main(['--rotor-model', 'prototype-fixed-ct', '--prototype-ct', '.009', '--diagnostics'])
         text = output.getvalue()
         self.assertIn(tmpe.PROTOTYPE_LABEL, text)
@@ -615,11 +616,11 @@ class GroundStartTests(unittest.TestCase):
 
     def test_ground_start_at_nonzero_field_elevation(self):
         output = io.StringIO()
-        # Only environmental inputs remain; field elevation is not height AGL.
-        with patch('builtins.input', side_effect=['', '', '', '', '500']) as prompts:
+        # Field elevation and the two phase durations are independent inputs.
+        with patch('builtins.input', side_effect=['', '', '', '', '500', '5', '2']) as prompts:
             with contextlib.redirect_stdout(output):
                 tmpe.main(['--verbose', '--rotor-model', 'prototype-fixed-ct'])
-        self.assertEqual(prompts.call_count, 5)
+        self.assertEqual(prompts.call_count, 7)
         text = output.getvalue()
         self.assertIn('helicopter-mode vertical takeoff', text)
         self.assertIn('on the ground, stationary, level, facing north', text)
@@ -724,7 +725,7 @@ class CollectiveCLITests(unittest.TestCase):
     def run_cli(self, pitches, extra=None):
         output = io.StringIO()
         flags = ['--rotor-model', 'prototype-collective'] + (extra or [])
-        with patch('builtins.input', side_effect=[''] * 5 + (['n'] if not extra else []) + pitches) as prompts:
+        with patch('builtins.input', side_effect=[''] * 5 + (['n'] if not extra else []) + pitches + ['5', '2']) as prompts:
             with patch.object(tmpe, 'calculate_collective_proprotor', wraps=tmpe.calculate_collective_proprotor) as calculation:
                 with patch.object(tmpe, 'simulate_takeoff', wraps=tmpe.simulate_takeoff) as simulation:
                     with contextlib.redirect_stdout(output):
@@ -776,7 +777,7 @@ class CollectiveCLITests(unittest.TestCase):
         text, prompts, calls, _ = self.run_cli(['nan', 'inf', '21', '4', '6'], flags)
         self.assertIn('finite number', text)
         self.assertIn('outside provisional-software bounds', text)
-        self.assertEqual(prompts.call_count, 10)
+        self.assertEqual(prompts.call_count, 12)
         self.assertEqual({call.args[3] for call in calls.call_args_list}, {4, 6})
 
     def test_invalid_option_combinations(self):
@@ -790,7 +791,7 @@ class CollectiveCLITests(unittest.TestCase):
 class DefaultCollectiveTests(unittest.TestCase):
     def run_default(self, answers):
         output = io.StringIO()
-        with patch('builtins.input', side_effect=[''] * 5 + answers) as prompts:
+        with patch('builtins.input', side_effect=[''] * 5 + answers + ['5', '2']) as prompts:
             with contextlib.redirect_stdout(output):
                 tmpe.main([])
         return output.getvalue(), prompts
@@ -812,7 +813,7 @@ class DefaultCollectiveTests(unittest.TestCase):
     def test_decline_preserves_unavailable_aircraft_model(self):
         for answer in ('no', ''):
             text, prompts = self.run_default([answer, '4', '6'])
-            self.assertEqual(prompts.call_count, 8)
+            self.assertEqual(prompts.call_count, 10)
             self.assertIn('Model: prototype-collective', text)
             for name in ('CT_reference', 'k_theta_per_deg', 'theta_reference_deg', 'reference_condition'):
                 self.assertIn(name, text)
@@ -931,7 +932,7 @@ class TransitionTests(unittest.TestCase):
 
     def test_cli_reporting_and_invalid_schedule(self):
         output = io.StringIO()
-        with patch('builtins.input', side_effect=[''] * 5), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']), contextlib.redirect_stdout(output):
             tmpe.main(['--rotor-model', 'prototype-fixed-ct', '--nacelle-schedule', '90:90', '45:30', '0:0'])
         text = output.getvalue()
         self.assertLess(text.index('PHASE 1 — HELICOPTER TAKEOFF'), text.index('PHASE 2 — NACELLE TRANSITION'))
@@ -943,6 +944,128 @@ class TransitionTests(unittest.TestCase):
         for value in ('91:0', 'nan:45', '45', '45:30:0', 'bad:0'):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 tmpe.main(['--nacelle-schedule', value])
+
+
+class TimedTransitionTests(unittest.TestCase):
+    def polar(self, content='alpha_deg,cl,cd\n-180,0.5,0.25\n180,0.5,0.25\n', source=None):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'polar.csv'
+            path.write_text(content)
+            return tmpe.TransitionPolar.load(path, source)
+
+    def test_polar_interpolation_and_validation(self):
+        polar = self.polar('alpha_deg,cl,cd\n-10,-1,0.2\n10,1,0.4\n', 'table reference')
+        self.assertEqual(polar.coefficients(-10), (-1, .2))
+        self.assertAlmostEqual(polar.coefficients(0)[0], 0)
+        self.assertAlmostEqual(polar.coefficients(0)[1], .3)
+        self.assertEqual(polar.coefficients(10), (1, .4))
+        self.assertIsNone(polar.coefficients(-10.01))
+        self.assertIsNone(polar.coefficients(10.01))
+        self.assertIn('SOURCED', polar.status)
+        for content in (
+            'alpha_rad,cl,cd\n-1,1,0.2\n1,1,0.2\n',
+            'alpha_deg,cl,cd\n1,1,0.2\n1,1,0.2\n',
+            'alpha_deg,cl,cd\n1,1,0.2\n0,1,0.2\n',
+            'alpha_deg,cl,cd\n0,1,0.2\n1,1,-0.2\n',
+            'alpha_deg,cl,cd\n0,1,0.2\n1,nan,0.2\n',
+            'alpha_deg,cl,cd\n0,1,0.2\n',
+        ):
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                self.polar(content)
+
+    def synthetic_takeoff(self):
+        aircraft = tmpe.Aircraft()
+        aircraft.wing_area_ft2 = 1
+        aircraft.wing_incidence_deg = 0
+        takeoff = tmpe.simulate_takeoff(
+            aircraft, tmpe.Environment(), duration_s=1, force_provider=lambda *_: {
+                'left_proprotor_thrust_n': 50000, 'right_proprotor_thrust_n': 50000,
+                'other_vertical_force_n': 0,
+            },
+        )
+        # A hand-checkable airborne handoff with a (3, 4) m/s relative wind vector.
+        takeoff.update(takeoff_mass_kg=10)
+        takeoff['motion'].update(height_agl_m=20, vertical_velocity_mps=4)
+        takeoff['left']['value'] = takeoff['left_proprotor_thrust_n'] = 50
+        takeoff['right']['value'] = takeoff['right_proprotor_thrust_n'] = 60
+        return aircraft, takeoff
+
+    def test_hand_calculated_forces_and_state_integration(self):
+        aircraft, takeoff = self.synthetic_takeoff()
+        self.assertAlmostEqual(aircraft.wing_area_m2, 0.09290304)
+        aircraft.wing_area_ft2 = 2 / 0.09290304
+        env = tmpe.Environment(windspeed=3, winddirection=0, air_density=2)
+        result = tmpe.simulate_transition(takeoff, aircraft, env, self.polar(), .25, .1, (0, 45))
+        first, *_, final = result['rows']
+        for key, expected in (
+            ('wind_forward_mps', -3), ('air_forward_mps', 3), ('air_up_mps', 4),
+            ('airspeed_mps', 5), ('alpha_deg', -53.13010235415598), ('q_pa', 25),
+            ('lift_n', 25), ('drag_n', 12.5), ('wing_forward_n', -27.5), ('wing_up_n', 5),
+            ('total_rotor_forward_n', 0), ('total_rotor_up_n', 110), ('aircraft_weight_n', 98.0665),
+            ('net_forward_n', -27.5), ('net_up_n', 16.9335),
+            ('forward_acceleration_mps2', -2.75), ('vertical_acceleration_mps2', 1.69335),
+        ):
+            self.assertAlmostEqual(first[key], expected)
+        self.assertEqual(first['aero_status'], 'USER-SUPPLIED / UNVALIDATED')
+        self.assertAlmostEqual(result['rows'][1]['height_agl_m'], 20 + .4 + .00846675)
+        self.assertAlmostEqual(result['rows'][1]['forward_velocity_mps'], -.275)
+        self.assertAlmostEqual(result['rows'][1]['forward_distance_m'], -.01375)
+        self.assertEqual([row['phase2_time_s'] for row in result['rows']], [0, .1, .2, .25])
+        self.assertEqual(final['simulation_time_s'], 1.25)
+        self.assertEqual(result['status'], 'CALCULATED')
+        self.assertAlmostEqual(final['left_rotor_forward_n'], 50)
+        self.assertAlmostEqual(final['left_rotor_up_n'], 0)
+        self.assertAlmostEqual(final['right_rotor_forward_n'], 60 / math.sqrt(2))
+        self.assertAlmostEqual(final['right_rotor_up_n'], 60 / math.sqrt(2))
+
+    def test_unavailable_inputs_and_ground_contact(self):
+        aircraft, takeoff = self.synthetic_takeoff()
+        env = tmpe.Environment(windspeed=3, winddirection=180, air_density=2)
+        narrow = self.polar('alpha_deg,cl,cd\n-1,1,0.2\n1,1,0.2\n')
+        result = tmpe.simulate_transition(takeoff, aircraft, env, narrow, 1, .1, (0, 0))
+        self.assertAlmostEqual(result['rows'][0]['air_forward_mps'], -3)
+        self.assertEqual(result['elapsed_s'], 0)
+        self.assertIsNone(result['rows'][0]['net_forward_n'])
+        self.assertIn('outside table', result['reason'])
+        no_polar = tmpe.simulate_transition(takeoff, aircraft, env, None, 1, .1, (0, 0))
+        self.assertIn('No usable wing CL/CD', no_polar['reason'])
+
+        takeoff['motion'].update(height_agl_m=1, vertical_velocity_mps=-2)
+        env.windspeed = 0
+        zero_load_polar = self.polar('alpha_deg,cl,cd\n-180,0,0\n180,0,0\n')
+        result = tmpe.simulate_transition(takeoff, aircraft, env, zero_load_polar, 2, 1, (0, 0))
+        self.assertEqual(result['status'], 'GROUND CONTACT')
+        # 1 - 2t + 0.5(11 - g)t² = 0 at first contact.
+        expected = 2 / (2 + math.sqrt(4 - 2 * (11 - tmpe.G)))
+        self.assertAlmostEqual(result['elapsed_s'], expected)
+        self.assertEqual(result['rows'][-1]['height_agl_m'], 0)
+
+        takeoff['motion'].update(height_agl_m=0, takeoff_status='GROUNDED')
+        result = tmpe.simulate_transition(takeoff, aircraft, env, narrow, 1, .1, (0, 0))
+        self.assertIn('Phase 1 ended GROUNDED', result['reason'])
+        self.assertEqual(result['rows'], [])
+
+    def test_cli_independent_durations_and_audit_csv(self):
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            polar_path = Path(directory) / 'polar.csv'
+            polar_path.write_text('alpha_deg,cl,cd\n-180,0.5,0.25\n180,0.5,0.25\n')
+            audit = Path(directory) / 'audit.csv'
+            flags = ['--rotor-model', 'prototype-fixed-ct', '--transition-polar', str(polar_path),
+                     '--transition-audit', str(audit), '--transition-end', '45:90']
+            with patch('builtins.input', side_effect=['', '', '0', '', '', '0', '5', 'inf', '.25']) as prompts:
+                with contextlib.redirect_stdout(output):
+                    tmpe.main(flags)
+            self.assertIn('Phase 1 takeoff duration (s)', prompts.call_args_list[5].args[0])
+            self.assertIn('Phase 2 transition duration (s)', prompts.call_args_list[7].args[0])
+            with audit.open(newline='') as stream:
+                rows = list(csv.DictReader(stream))
+        self.assertIn('Phase 1 elapsed: 5 / 5 s', output.getvalue())
+        self.assertIn('Phase 2 elapsed: 0.25 / 0.25 s', output.getvalue())
+        self.assertEqual(rows[-1]['left_nacelle_deg'], '45.0')
+        self.assertEqual(rows[-1]['right_nacelle_deg'], '90.0')
+        self.assertIn('ILLUSTRATIVE', rows[-1]['left_rotor_calibration'])
+        self.assertEqual(rows[-1]['aero_status'], 'USER-SUPPLIED / UNVALIDATED')
 
 
 if __name__ == '__main__':
