@@ -1217,7 +1217,9 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
         row = dict(phase2_time_s=time, simulation_time_s=state.elapsed_s, height_agl_m=state.height_agl_m,
                    forward_distance_m=state.forward_distance_m, forward_velocity_mps=state.forward_velocity_mps,
                    vertical_velocity_mps=state.vertical_velocity_mps, mass_kg=mass,
-                   aircraft_weight_n=None if mass is None else mass * G, rotor_model=takeoff['rotor_model'])
+                   aircraft_weight_n=None if mass is None else mass * G, rotor_model=takeoff['rotor_model'],
+                   trajectory_status='ILLUSTRATIVE / SOFTWARE-TEST ONLY',
+                   aircraft_transition_status='UNAVAILABLE')
         rotor_vectors = []
         for side, angle in zip(('left', 'right'), angles):
             rotor = takeoff[side]
@@ -1227,6 +1229,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
                         f'{side}_rotor_forward_n': None if vector is None else vector[0],
                         f'{side}_rotor_up_n': None if vector is None else -vector[2],
                         f'{side}_rotor_source': rotor.get('source') or rotor['reason'],
+                        f'{side}_rotor_configuration_source': rotor.get('configuration_source'),
                         f'{side}_rotor_status': rotor['status'],
                         f'{side}_rotor_reason': rotor['reason'],
                         f'{side}_rotor_calibration': rotor.get('source_status', rotor.get('calibration_status', 'UNAVAILABLE'))})
@@ -1292,14 +1295,23 @@ def report_transition_equations():
     print('a = F_net/m; v_next = v + a*dt; position_next = position + v*dt + 0.5*a*dt².')
 
 
+AIRCRAFT_TRANSITION_BLOCKER = (
+    'Missing installed per-rotor thrust and shaft-power maps across nacelle angle, inflow/airspeed, '
+    'RPM or tip Mach, density and blade collective, plus wing/pylon forces across angle of attack, '
+    'nacelle angle and flap/flaperon settings, with rotor-wake effects.'
+)
+
+
 def report_timed_transition(result, audit_path=None):
     print('\nPHASE 2 — TIMED TRANSITION')
-    print(f"Phase 2 status: {result['status']} — {result['reason']}")
+    print('XV-15 aircraft transition: UNAVAILABLE.')
+    print(f"Phase 2 demonstration status: {result['status']} — {result['reason']}")
     print(f"Phase 2 elapsed: {result['elapsed_s']:.6g} / {result['requested_s']:.6g} s")
     rows = result['rows']
     if not rows:
         return
 
+    print('ILLUSTRATIVE — software test only. Phase 1 thrust magnitudes held fixed with one wing polar.')
     print('\nCheckpoints (nearest evaluated timesteps)')
     columns = (
         ('t (s)', 'phase2_time_s'), ('L tilt (°)', 'left_nacelle_deg'),
@@ -1338,7 +1350,7 @@ def report_timed_transition(result, audit_path=None):
 def report_final_state(transition, takeoff):
     state = transition['final_state'] if transition['elapsed_s'] > 0 else initialize_transition(takeoff)
     if transition['elapsed_s'] > 0:
-        phase = 'PHASE 2' if transition['status'] != 'UNAVAILABLE' else 'PHASE 2 (LAST SIMULATED STATE)'
+        phase = 'PHASE 2 (ILLUSTRATIVE DEMONSTRATION)'
     elif takeoff['elapsed_s'] > 0:
         phase = 'PHASE 1 (RETAINED STATE)'
     else:
@@ -1457,14 +1469,32 @@ def report_takeoff(result):
 def report_data_status(takeoff, transition, aircraft, polar):
     print('\nDATA STATUS AND BLOCKERS')
     print('XV-15 flight validation: UNAVAILABLE for this model.')
-    for side in ('left', 'right'):
-        rotor = takeoff[side]
-        provenance = rotor.get('source_status') or rotor.get('calibration_status')
-        print(f"{side.title()} rotor: {rotor['status']}" + (f" — {provenance}" if provenance else ''))
-        if rotor.get('source'):
-            print(f"  Data source: {rotor['source']}")
-        if rotor['value'] is None:
+    rotors = [takeoff[side] for side in ('left', 'right')]
+    model = takeoff['rotor_model']
+    statuses = []
+    for side, rotor in zip(('Left', 'Right'), rotors):
+        value = rotor['value']
+        provenance = rotor.get('source_status') or rotor.get('calibration_status') or ''
+        status = 'ILLUSTRATIVE; software test only' if 'ILLUSTRATIVE' in provenance else rotor['status']
+        source = rotor.get('source')
+        configuration = rotor.get('configuration_source')
+        source = ' | '.join(item for item in (configuration, source) if item)
+        statuses.append(status)
+        if value is None:
+            print(f'{side} rotor thrust: UNAVAILABLE | model: {model}')
             print(f"  {rotor['reason']}")
+        else:
+            print(f'{side} rotor thrust: {value:,.2f} N — {status} | model: {model}')
+        if source:
+            print(f'  Source: {source}')
+
+    if all(rotor['value'] is not None for rotor in rotors):
+        total = sum(rotor['value'] for rotor in rotors)
+        status = 'ILLUSTRATIVE; software test only' if any(label.startswith('ILLUSTRATIVE') for label in statuses) else 'CALCULATED'
+        print(f'Total rotor thrust: {total:,.2f} N — {status} | model: {model}')
+    else:
+        print(f'Total rotor thrust: UNAVAILABLE — both rotor values are required | model: {model}')
+    print('  Basis: sum of left and right rotor-axis magnitudes, using the sources above.')
     if takeoff['motion']['status'] != 'CALCULATED':
         print(f"Phase 1 blocker: {takeoff['balance']['reason']}")
         if takeoff['elapsed_s'] == 0:
@@ -1483,6 +1513,9 @@ def report_data_status(takeoff, transition, aircraft, polar):
         record = aircraft.diagnostics[name]
         if record['value'] is None:
             print(f"{name}: UNAVAILABLE — {record['file']} :: {record['path']} — {record['reason']}")
+    print('Source-backed XV-15 hover thrust: UNAVAILABLE — no mapped pilot-to-blade pitch datum '
+          'or matched rotor version, RPM/tip Mach and atmospheric conditions for an installed-rotor calibration.')
+    print(f'Aircraft transition inputs: UNAVAILABLE — {AIRCRAFT_TRANSITION_BLOCKER}')
     print('Rotor mast power: UNAVAILABLE — commanded shaft power and power split are unknown.')
     print('Phase 1 wing loads, ground effect and wind response: NOT MODELED.')
     print('Phase 2 rotor inflow/RPM response, ground effect, rotor/wing interference, other airframe loads, '

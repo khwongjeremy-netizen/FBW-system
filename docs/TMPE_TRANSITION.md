@@ -93,3 +93,25 @@ in the working directory. Use `--transition-audit` to choose a new file path.
 The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
 and aerodynamic provenance. Blank numerical cells represent unavailable
 quantities. A preflight block before any step is reported on the console.
+
+## Primary-source review
+
+The aircraft transition remains unavailable. The timed demonstration uses
+held Phase 1 thrust and one supplied wing polar. Both the console and CSV
+identify that trajectory as illustrative. Independent measured XV-15
+transition data would be needed for flight validation.
+
+| Report and locator | Applicable data | Why no runtime values were imported |
+| --- | --- | --- |
+| [NASA TM-86833](https://ntrs.nasa.gov/citations/19860005773), Fig. 17, Tables 2–3 and Appendix A | Full-scale original metal-blade rotor on a hover test stand, tip Mach 0.60–0.73. Table 2 defines `COLL` at 0.75 radius in degrees, `RPM` in rev/min, `RHO` in kg/m³ and thrust in N. Fig. 17 uses thrust coefficient divided by solidity. | The report supplies paired stand data. TMPE accepts a pilot pitch input with no established mapping to the actuator-derived blade datum, and its design RPM and entered density are scenario inputs. A matched run and a separate installed-rotor applicability model are needed before applying the data to takeoff. |
+| [NASA CR-177436](https://ntrs.nasa.gov/citations/19880016983), §7, Fig. 7.3 (printed p. 53), Figs. 7.13 and 7.32–7.33 | Distinct full-scale baseline metal and advanced technology blade (ATB) hover configurations. The report compares nondimensional thrust and power and identifies run-level RPM/tip Mach. | The authors flag the baseline metal-blade collective readings as suspect and use them to illustrate curve shape. The ATB data apply to a different blade system. |
+| [NASA TM-81177](https://ntrs.nasa.gov/citations/19800015802), notation, Fig. 13, Table II and tunnel scale-data printout | Full-aircraft tunnel runs in helicopter, conversion and airplane configurations. Test configurations include changes to pylon and wing hardware. | TMPE has no ingested run map matching rotor-on/off configuration, flap/flaperon settings, tilt, airspeed, thrust and shaft power. Total tunnel loads require a consistent decomposition before use alongside separate rotor forces. |
+| [NASA CR-176970](https://ntrs.nasa.gov/citations/19860020297), Chapter 2, Tables 1 and 5, and Chapter 5 | Configuration-specific hover download estimates combining out-of-ground-effect hover data and representative wing tunnel data. Table 5 gives download relative to total aircraft thrust at a selected power setting across flap settings. | These hover results do not define wake download across nacelle angle and forward speed. No fixed hover download fraction was applied to takeoff or conversion. |
+
+No NASA test coefficients were added or converted into live model inputs.
+The existing fixed-CT demonstration uses the illustrative `CT=0.0102`
+from `rotor.xml`, a 25 ft diameter and the XML design hover setting of
+565 rev/min. At an entered density of 1.225 kg/m³, the diameter converts to
+7.62 m, radius to 3.81 m, and angular speed to `565 × 2π/60` rad/s.
+Evaluating `CT × ρ × πR² × (ΩR)²` gives 28,956.11 N per rotor and
+57,912.21 N total. Output rounds each displayed value independently.

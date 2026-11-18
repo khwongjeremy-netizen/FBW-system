@@ -747,6 +747,11 @@ class CollectiveCLITests(unittest.TestCase):
         self.assertIn('TAKEOFF STATUS         : AIRBORNE', high)
         self.assertIn('experimental validation: NOT VALIDATED', high)
         self.assertIn('MATHEMATICAL TEST ONLY', high)
+        asymmetric, _, _, _ = self.run_cli(['4', '6'], flags)
+        self.assertIn('Left rotor thrust: 25,549.51 N — ILLUSTRATIVE', asymmetric)
+        self.assertIn('Right rotor thrust: 31,227.17 N — ILLUSTRATIVE', asymmetric)
+        self.assertIn('Total rotor thrust: 56,776.68 N — ILLUSTRATIVE', asymmetric)
+        self.assertIn(str(self.fixture), asymmetric)
 
     def test_per_side_ct_and_analytic_trajectory(self):
         model = tmpe.LinearCollectiveModel.load(self.fixture)
@@ -1070,6 +1075,8 @@ class TimedTransitionTests(unittest.TestCase):
         self.assertEqual(rows[-1]['aero_status'], 'USER-SUPPLIED / UNVALIDATED')
         self.assertEqual(rows[-1]['aero_user_source'], 'Pilot notes')
         self.assertEqual(rows[-1]['aero_validation'], 'UNVALIDATED')
+        self.assertEqual(rows[-1]['trajectory_status'], 'ILLUSTRATIVE / SOFTWARE-TEST ONLY')
+        self.assertEqual(rows[-1]['aircraft_transition_status'], 'UNAVAILABLE')
         self.assertEqual(len(rows), 26)
         report = output.getvalue()
         headings = ('RUN SUMMARY', 'INPUTS', 'PHASE 1 — HELICOPTER TAKEOFF',
