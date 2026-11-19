@@ -1126,6 +1126,12 @@ class TransitionPolar:
                 return tuple(a + fraction * (b - a) for a, b in zip(lower[1:], upper[1:]))
 
 
+SIMPLIFIED_TRANSITION_LABEL = 'SIMPLIFIED ILLUSTRATIVE TRANSITION'
+# Editable software-test assumptions. CL and CD are dimensionless.
+SIMPLIFIED_TRANSITION_CL = 0.50
+SIMPLIFIED_TRANSITION_CD = 0.08
+
+
 def transition_wing_forces(state, aircraft, environment, polar):
     """North-facing level x/up plane. Lift points toward up at gamma = 0.
 
@@ -1138,17 +1144,21 @@ def transition_wing_forces(state, aircraft, environment, polar):
                air_up_mps=None, airspeed_mps=None, gamma_deg=None, alpha_deg=None, q_pa=None,
                cl=None, cd=None, lift_n=None, drag_n=None, wing_forward_n=None, wing_up_n=None,
                air_density_kg_m3=environment.air_density, wing_area_m2=aircraft.wing_area_m2,
-               wing_incidence_deg=aircraft.wing_incidence_deg, aero_source=polar.source,
-               aero_user_source=polar.user_source, aero_validation='UNVALIDATED',
+               wing_incidence_deg=aircraft.wing_incidence_deg,
+               aero_source=SIMPLIFIED_TRANSITION_LABEL if polar is None else polar.source,
+               aero_user_source=None if polar is None else polar.user_source, aero_validation='UNVALIDATED',
                aero_status='UNAVAILABLE', aero_reason='')
-    try:
-        require_finite('Wind speed', environment.windspeed, 0)
-        require_finite('Wind FROM direction', environment.winddirection)
-        require_finite('Forward velocity', state.forward_velocity_mps)
-        require_finite('Vertical velocity', state.vertical_velocity_mps)
-    except (TypeError, ValueError):
-        row['aero_reason'] = 'Wind or aircraft velocity is missing or invalid'
-        return row
+    for label, value, minimum in (
+        ('Wind speed', environment.windspeed, 0),
+        ('Wind FROM direction', environment.winddirection, None),
+        ('Forward velocity', state.forward_velocity_mps, None),
+        ('Vertical velocity', state.vertical_velocity_mps, None),
+    ):
+        try:
+            require_finite(label, value, minimum)
+        except (TypeError, ValueError):
+            row['aero_reason'] = f'{label} is missing or invalid'
+            return row
     wind_forward, wind_east, _ = wind_velocity_ned(environment.windspeed, environment.winddirection)
     forward = state.forward_velocity_mps - wind_forward
     up = state.vertical_velocity_mps
@@ -1158,6 +1168,24 @@ def transition_wing_forces(state, aircraft, environment, polar):
     density = environment.air_density
     if density is not None and math.isfinite(density) and density >= 0:
         row['q_pa'] = .5 * density * speed**2
+    if polar is None:
+        cl, cd = SIMPLIFIED_TRANSITION_CL, SIMPLIFIED_TRANSITION_CD
+        row.update(cl=cl, cd=cd)
+        area = row['wing_area_m2']
+        for label, value, valid in (
+            ('Air density', row['q_pa'], row['q_pa'] is not None),
+            ('Wing reference area', area, area is not None and area > 0),
+            ('Assumed CL', cl, cl is not None),
+            ('Assumed CD', cd, cd is not None and cd >= 0),
+        ):
+            if not valid or not math.isfinite(value):
+                row['aero_reason'] = f'{label} is missing or invalid'
+                return row
+        lift = row['q_pa'] * area * cl
+        drag = row['q_pa'] * area * cd
+        row.update(lift_n=lift, drag_n=drag, wing_forward_n=-drag, wing_up_n=lift,
+                   aero_status='ILLUSTRATIVE / SOFTWARE-TEST ASSUMPTIONS')
+        return row
     if speed <= FLOW_EPS_MPS:
         row['aero_reason'] = 'Flight-path angle and AoA undefined at insufficient planar airspeed'
         return row
@@ -1194,16 +1222,12 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
             raise ValueError(f'{label} must be positive')
     left_end, right_end = map(validate_transition_angle, end_angles)
     state = initialize_transition(takeoff)
-    result = dict(final_state=state, elapsed_s=0.0, requested_s=duration_s, rows=[],
+    result = dict(final_state=state, elapsed_s=0.0, requested_s=duration_s, rows=[], simplified=polar is None,
                   status='UNAVAILABLE', reason='')
     if takeoff['motion']['takeoff_status'] != 'AIRBORNE' or state.height_agl_m <= 0:
         result['reason'] = (f"Phase 1 ended {takeoff['motion']['takeoff_status']}. "
                             f"{takeoff['motion']['reason']}")
         return result
-    if polar is None:
-        result['reason'] = 'No polar CSV was supplied. Use --transition-polar PATH.'
-        return result
-
     starts = (state.left_nacelle_angle_deg, state.right_nacelle_angle_deg)
     mass = takeoff['takeoff_mass_kg']
     time = 0.0
@@ -1250,11 +1274,19 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
         if landed:
             result.update(status='GROUND CONTACT', reason='Airborne integration stopped at ground contact')
             break
+        if ax is None or az is None:
+            missing = [f'{side} {quantity}' for side in ('left', 'right')
+                       for quantity, suffix in (('rotor thrust', 'thrust_n'), ('nacelle angle', 'nacelle_deg'))
+                       if row[f'{side}_{suffix}'] is None]
+            if mass is None:
+                missing.append('aircraft mass')
+            reasons = [row['aero_reason']] if row['aero_reason'] else []
+            if missing:
+                reasons.append('Missing ' + ', '.join(missing))
+            result['reason'] = '. '.join(reasons)
+            break
         if time == duration_s:
             result.update(status='CALCULATED', reason='Requested duration reached')
-            break
-        if ax is None or az is None:
-            result['reason'] = row['aero_reason'] or 'Rotor force, nacelle angle or mass unavailable'
             break
 
         step += 1
@@ -1282,14 +1314,18 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
     return result
 
 
-def report_transition_equations():
+def report_transition_equations(simplified=False):
     print('Assumptions: level, facing north; forward/up positive; east wind excluded from the 2D flow.')
     print('Nacelles: independent linear ramps over requested duration, 0 deg forward / 90 deg up.')
     print('Rotor magnitudes held at Phase 1 values with original calibration status. Prototype T = CT rho A (Omega R)^2.')
     print('V_air = V_ground - V_wind; wind-FROM projects as -speed*cos(direction) north.')
-    print('gamma = atan2(V_air_up, V_air_forward); wing AoA = incidence - gamma.')
-    print('q = 0.5 rho |V_air|²; L = q S CL; D = q S CD; CL/CD interpolated within the supplied table.')
-    print('Wing forward = -L*sin(gamma) - D*cos(gamma); wing up = L*cos(gamma) - D*sin(gamma).')
+    print('q = 0.5 rho |V_air|²; L = q S CL; D = q S CD.')
+    if simplified:
+        print('Constant CL and CD; wing forward = -D; wing up = L.')
+    else:
+        print('gamma = atan2(V_air_up, V_air_forward); wing AoA = incidence - gamma.')
+        print('CL/CD interpolated within the supplied table.')
+        print('Wing forward = -L*sin(gamma) - D*cos(gamma); wing up = L*cos(gamma) - D*sin(gamma).')
     print('Each rotor forward = T*cos(nacelle); up = T*sin(nacelle).')
     print('Net forward = rotor forward + wing forward; net up = rotor up + wing up - mass*g.')
     print('a = F_net/m; v_next = v + a*dt; position_next = position + v*dt + 0.5*a*dt².')
@@ -1305,12 +1341,43 @@ AIRCRAFT_TRANSITION_BLOCKER = (
 def report_timed_transition(result, audit_path=None):
     print('\nPHASE 2 — TIMED TRANSITION')
     print('XV-15 aircraft transition: UNAVAILABLE.')
-    print(f"Phase 2 demonstration status: {result['status']} — {result['reason']}")
+    simplified = result['simplified']
+    if simplified:
+        print(SIMPLIFIED_TRANSITION_LABEL)
+        print('ILLUSTRATIVE / SOFTWARE-TEST ASSUMPTIONS')
+        for label, value in (('CL', SIMPLIFIED_TRANSITION_CL), ('CD', SIMPLIFIED_TRANSITION_CD)):
+            print(f'  Constant wing {label} = {format_quantity(value, "dimensionless")}')
+        print('  Rotor thrust held at the selected Phase 1 model values throughout the transition.')
+        print('  Level attitude assumed. Rotor inflow, power-limited thrust and ground effect are excluded.')
+    status = f"ILLUSTRATIVE / {result['status']}" if simplified else result['status']
+    print(f"Phase 2 demonstration status: {status} — {result['reason']}")
     print(f"Phase 2 elapsed: {result['elapsed_s']:.6g} / {result['requested_s']:.6g} s")
     rows = result['rows']
     if not rows:
         return
 
+    if simplified:
+        print('\nILLUSTRATIVE time history (forward and up positive)')
+        columns = (
+            ('t (s)', 'phase2_time_s'), ('L tilt (°)', 'left_nacelle_deg'), ('R tilt (°)', 'right_nacelle_deg'),
+            ('Rotor Fx (N)', 'total_rotor_forward_n'), ('Rotor Fz (N)', 'total_rotor_up_n'),
+            ('Lift (N)', 'lift_n'), ('Drag (N)', 'drag_n'),
+            ('Net Fx (N)', 'net_forward_n'), ('Net Fz (N)', 'net_up_n'),
+            ('ax (m/s²)', 'forward_acceleration_mps2'), ('az (m/s²)', 'vertical_acceleration_mps2'),
+            ('Vx (m/s)', 'forward_velocity_mps'), ('x (m)', 'forward_distance_m'), ('AGL (m)', 'height_agl_m'),
+        )
+        print(' '.join(f'{label:>12}' for label, _ in columns))
+        for row in rows:
+            print(' '.join(f'{("UNAVAILABLE" if row[key] is None else format_number(row[key], 3)):>12}'
+                           for _, key in columns))
+            if row['aero_reason']:
+                print(f"  Wing forces UNAVAILABLE — {row['aero_reason']}")
+    else:
+        report_transition_checkpoints(rows)
+    write_transition_audit(rows, audit_path)
+
+
+def report_transition_checkpoints(rows):
     print('ILLUSTRATIVE — software test only. Phase 1 thrust magnitudes held fixed with one wing polar.')
     print('\nCheckpoints (nearest evaluated timesteps)')
     columns = (
@@ -1330,6 +1397,9 @@ def report_timed_transition(result, audit_path=None):
     for row in checkpoints:
         print(' '.join(f'{format_number(row[key], 3):>11}' for _, key in columns))
     print('— in checkpoints indicates unavailable data.')
+
+
+def write_transition_audit(rows, audit_path):
     try:
         if audit_path is None:
             output_dir = Path('output')
@@ -1494,17 +1564,18 @@ def report_data_status(takeoff, transition, aircraft, polar):
         print(f"Phase 1 blocker: {takeoff['balance']['reason']}")
         if takeoff['elapsed_s'] == 0:
             print('Phase 1 takeoff not simulated.')
-    if polar is None:
-        print('Wing polar: UNAVAILABLE — no polar CSV was supplied. Use --transition-polar PATH.')
-    else:
+    if polar is not None:
         print(f'Wing polar: {polar.status} — {polar.source}')
         if polar.user_source:
             print(f'  User-provided source metadata: {polar.user_source}')
-    if transition['status'] == 'UNAVAILABLE' and (polar is not None or not transition['reason'].startswith('No polar CSV')):
+    if transition['status'] == 'UNAVAILABLE':
         print(f"Phase 2 blocker: {transition['reason']}")
     elif transition['rows'] and transition['rows'][-1]['aero_reason']:
         print(f"Last wing force evaluation: UNAVAILABLE — {transition['rows'][-1]['aero_reason']}")
-    for name in ('design_gross', 'nacelle_angle_deg', 'wing_area_ft2', 'wing_incidence_deg'):
+    inputs = ('design_gross', 'nacelle_angle_deg', 'wing_area_ft2')
+    if polar is not None:
+        inputs += ('wing_incidence_deg',)
+    for name in inputs:
         record = aircraft.diagnostics[name]
         if record['value'] is None:
             print(f"{name}: UNAVAILABLE — {record['file']} :: {record['path']} — {record['reason']}")
@@ -1728,7 +1799,7 @@ def main(argv=None):
         report_transition(sample_nacelle_transition(result, angle_pairs))
     if args.verbose:
         print('\nTRANSITION EQUATIONS')
-        report_transition_equations()
+        report_transition_equations(simplified=polar is None)
     if args.ideal_rated_hover:
         report_rated_ideal_hover(aircraft, environment)
     if args.diagnostics or args.verbose:

@@ -9,7 +9,7 @@ duration prompt, with equivalent CLI flags for scripted runs. The shared
 ```sh
 python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' \
   --rotor-model prototype-fixed-ct --duration 5 --transition-duration 2 \
-  --transition-end 45:30 --transition-polar path/to/wing.csv
+  --transition-end 45:30
 ```
 
 The example selects the fixed-CT software-test model. The illustrative
@@ -21,8 +21,16 @@ samples. Those samples leave the timed schedule and state untouched.
 
 ## Wing coefficient input
 
-The XML contains curve descriptions and approximate descriptors, but no usable
-paired wing CL/CD arrays. Supply a CSV with the header `alpha_deg,cl,cd`.
+Without a CSV, Phase 2 runs the **SIMPLIFIED ILLUSTRATIVE TRANSITION**.
+The dimensionless software-test defaults are CL = 0.50 and CD = 0.08.
+Edit `SIMPLIFIED_TRANSITION_CL` and `SIMPLIFIED_TRANSITION_CD` in the TMPE
+script to change them. Rotor thrust magnitudes carry over from the selected
+Phase 1 model. Dynamic pressure uses the existing planar wind convention.
+The simplified net forces are rotor forward force minus drag and rotor up
+force plus lift minus weight. Each evaluated timestep appears in the console.
+
+To use a tabulated polar, pass `--transition-polar path/to/wing.csv` with
+the header `alpha_deg,cl,cd`.
 Use wing angle of attack in degrees and dimensionless lift and drag
 coefficients based on the XML wing reference area. Provide at least two rows
 with finite values and strictly increasing angles. CD must be nonnegative.
@@ -40,7 +48,7 @@ validation status. The program does not infer CL or CD from curve descriptions.
 | Input or result | Basis or blocker |
 | --- | --- |
 | Design gross mass, weight, wing geometry, nacelle setting | Existing XML. The program converts gross weight in pounds to mass in kg and calculates weight using standard gravity. [NASA TM-81244](https://ntrs.nasa.gov/api/citations/19810001546/downloads/19810001546.pdf) documents the design gross weight and nacelle convention. |
-| Wing CL/CD | Requires a CSV for this run. The configuration-dependent wing/pylon tables cited in [NASA CR-166536](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf) need their flow-angle, control-setting, reference-area and nacelle-angle definitions mapped before use. The [repository data-gap report](../TMPE_AERODYNAMIC_DATA_GAPS_REPORT.md) records the table locations and remaining mapping work. A generic airfoil polar cannot establish aircraft wing/pylon loads. |
+| Wing CL/CD | Software-test constants by default, or user-supplied CSV values. The configuration-dependent wing/pylon tables need their flow-angle, control-setting, reference-area and nacelle-angle definitions mapped before use. [NASA CR-166536](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf) · [Repository data-gap report](../TMPE_AERODYNAMIC_DATA_GAPS_REPORT.md) |
 | Actual rotor thrust, power and collective calibration | The shipped collective calibration lacks matched pitch/thrust data and reference conditions. Design RPM, diameter and engine rating do not establish mast power or a takeoff/conversion thrust law. [NASA TM-86833](https://ntrs.nasa.gov/citations/19860005773) is a full-scale hover-test data lead with a different scope from conversion. |
 | Additional loads and attitude | Rotor/wing interference, other airframe loads, and attitude response are outside the implemented force model. |
 | Air density, temperature and elevation | The entered density is held constant and used for dynamic pressure and prototype rotor thrust. Temperature and ground elevation MSL are displayed as context. There is no atmosphere calculation. |
@@ -85,8 +93,8 @@ performance map or establish a validated transition trajectory.
 
 ## Audit
 
-The console shows both stage times and up to five checkpoints, including the
-first and last evaluated states. Use `--verbose` to print the equations. When
+The console shows both stage times, the full simplified time history, or up to
+five checkpoints for the supplied-polar path. Use `--verbose` to print the equations. When
 Phase 2 advances no time, the final state is explicitly attributed to Phase 1.
 All evaluated rows are saved to a unique `output/stage2_audit_*.csv`
 in the working directory. Use `--transition-audit` to choose a new file path.
@@ -96,10 +104,9 @@ quantities. A preflight block before any step is reported on the console.
 
 ## Primary-source review
 
-The aircraft transition remains unavailable. The timed demonstration uses
-held Phase 1 thrust and one supplied wing polar. Both the console and CSV
-identify that trajectory as illustrative. Independent measured XV-15
-transition data would be needed for flight validation.
+Both demonstration paths hold Phase 1 thrust and label their trajectories
+as illustrative in the console and CSV. Flight validation requires independent
+measured XV-15 transition data.
 
 | Report and locator | Applicable data | Why no runtime values were imported |
 | --- | --- | --- |

@@ -638,7 +638,8 @@ class GroundStartTests(unittest.TestCase):
         text = output.getvalue()
         self.assertIn('helicopter-mode vertical takeoff', text)
         self.assertIn('on the ground, stationary, level, facing north', text)
-        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 0.18 m')
+        self.assertRegex(text, r'(?m)^\s*0\.000\s+90\.000\s+90\.000[^\n]+0\.181$')
+        self.assertIn('ILLUSTRATIVE / GROUND CONTACT', text)
         self.assertIn('Ground elevation (MSL): 500.00 m', text)
         self.assertIn('Prescribed ground velocity NED: (0.00, 0.00, 0.00) m/s', text)
         self.assertIn('TAKEOFF STATUS         : AIRBORNE', text)
@@ -827,7 +828,10 @@ class DefaultCollectiveTests(unittest.TestCase):
         self.assertIn('Basis: sum of left and right rotor-axis magnitudes.', text)
         self.assertIn('left: pilot collective = 6.0 deg; CT = 0.011', text)
         self.assertIn('right: pilot collective = 6.0 deg; CT = 0.011', text)
-        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 9.81 m')
+        self.assertIn('SIMPLIFIED ILLUSTRATIVE TRANSITION', text)
+        self.assertIn('ILLUSTRATIVE time history', text)
+        self.assertRegex(text, r'(?m)^\s*0\.000\s+90\.000\s+90\.000[^\n]+9\.809$')
+        self.assertIn('Phase 2 elapsed: 2 / 2 s', text)
         self.assertIn('MATHEMATICAL TEST ONLY', text)
         self.assertIn('experimental validation: NOT VALIDATED', text)
 
@@ -851,7 +855,8 @@ class DefaultCollectiveTests(unittest.TestCase):
                 text, _ = self.run_default(['y', '6', '6'])
             finally:
                 os.chdir(previous)
-        self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 9.81 m')
+        self.assertIn('Phase 2 elapsed: 2 / 2 s', text)
+        self.assertNotIn('collective_illustrative.json', text)
 
 
 class TransitionTests(unittest.TestCase):
@@ -1050,7 +1055,19 @@ class TimedTransitionTests(unittest.TestCase):
         self.assertIsNone(result['rows'][0]['net_forward_n'])
         self.assertIn('outside table', result['reason'])
         no_polar = tmpe.simulate_transition(takeoff, aircraft, env, None, 1, .1, (0, 0))
-        self.assertIn('No polar CSV was supplied. Use --transition-polar PATH.', no_polar['reason'])
+        self.assertEqual(no_polar['status'], 'CALCULATED')
+        first = no_polar['rows'][0]
+        q_area = 25 * aircraft.wing_area_m2
+        self.assertAlmostEqual(first['lift_n'], q_area * .50)
+        self.assertAlmostEqual(first['drag_n'], q_area * .08)
+        self.assertAlmostEqual(first['net_forward_n'], -q_area * .08)
+        self.assertAlmostEqual(first['net_up_n'], 110 + q_area * .50 - 10 * tmpe.G)
+        self.assertAlmostEqual(no_polar['rows'][1]['left_nacelle_deg'], 81)
+        self.assertEqual(no_polar['rows'][-1]['left_nacelle_deg'], 0)
+        with patch.object(aircraft, 'wing_area_ft2', None):
+            missing = tmpe.simulate_transition(takeoff, aircraft, env, None, 1, .1, (0, 0))
+        self.assertIn('Wing reference area', missing['reason'])
+        self.assertIsNone(missing['rows'][0]['lift_n'])
 
         takeoff['motion'].update(height_agl_m=1, vertical_velocity_mps=-2)
         env.windspeed = 0
@@ -1107,12 +1124,13 @@ class TimedTransitionTests(unittest.TestCase):
         output = io.StringIO()
         with patch('builtins.input', side_effect=[''] * 5 + ['5', '2']):
             with contextlib.redirect_stdout(output):
-                tmpe.main(['--rotor-model', 'prototype-fixed-ct'])
+                tmpe.main(['--rotor-model', 'prototype-fixed-ct', '--prototype-ct', '.009'])
         report = output.getvalue()
         self.assertIn('Phase 2 elapsed: 0 / 2 s', report)
         self.assertIn('FINAL STATE — PHASE 1 (RETAINED STATE)', report)
         self.assertNotIn('FINAL STATE — PHASE 2', report)
-        self.assertNotIn('Checkpoints', report)
+        self.assertIn('Phase 1 ended GROUNDED', report)
+        self.assertNotIn('ILLUSTRATIVE time history', report)
 
 
 if __name__ == '__main__':
