@@ -1476,17 +1476,12 @@ def report_data_status(takeoff, transition, aircraft, polar):
         value = rotor['value']
         provenance = rotor.get('source_status') or rotor.get('calibration_status') or ''
         status = 'ILLUSTRATIVE; software test only' if 'ILLUSTRATIVE' in provenance else rotor['status']
-        source = rotor.get('source')
-        configuration = rotor.get('configuration_source')
-        source = ' | '.join(item for item in (configuration, source) if item)
         statuses.append(status)
         if value is None:
             print(f'{side} rotor thrust: UNAVAILABLE | model: {model}')
             print(f"  {rotor['reason']}")
         else:
             print(f'{side} rotor thrust: {value:,.2f} N — {status} | model: {model}')
-        if source:
-            print(f'  Source: {source}')
 
     if all(rotor['value'] is not None for rotor in rotors):
         total = sum(rotor['value'] for rotor in rotors)
@@ -1494,7 +1489,7 @@ def report_data_status(takeoff, transition, aircraft, polar):
         print(f'Total rotor thrust: {total:,.2f} N — {status} | model: {model}')
     else:
         print(f'Total rotor thrust: UNAVAILABLE — both rotor values are required | model: {model}')
-    print('  Basis: sum of left and right rotor-axis magnitudes, using the sources above.')
+    print('  Basis: sum of left and right rotor-axis magnitudes.')
     if takeoff['motion']['status'] != 'CALCULATED':
         print(f"Phase 1 blocker: {takeoff['balance']['reason']}")
         if takeoff['elapsed_s'] == 0:
@@ -1690,7 +1685,6 @@ def main(argv=None):
             if not args.allow_illustrative_collective and model.parameters.get('parameter_status') != 'calibrated':
                 print('\nAircraft collective model is UNCALIBRATED / UNAVAILABLE.')
                 print(model.evaluate(0)['reason'])
-                print('Illustrative fixture:', illustrative_path)
                 print('Illustrative coefficients are for SOFTWARE TESTING ONLY; NOT validated XV-15 predictions.')
                 while True:
                     answer = input('Enable illustrative collective testing? [y/N]: ').strip().lower()

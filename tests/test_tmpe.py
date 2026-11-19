@@ -611,7 +611,7 @@ class FixedCTPrototypeTests(unittest.TestCase):
             tmpe.main(['--rotor-model', 'prototype-fixed-ct', '--prototype-ct', '.009', '--diagnostics'])
         text = output.getvalue()
         self.assertIn(tmpe.PROTOTYPE_LABEL, text)
-        self.assertIn('explicit CT override assumption', text)
+        self.assertIn('Fixed CT: 0.009', text)
         self.assertIn('EXCLUDED', text)
         self.assertIn('GROUNDED', text)
         self.assertIn('not verified XV-15', text)
@@ -765,7 +765,7 @@ class CollectiveCLITests(unittest.TestCase):
         self.assertIn('Left rotor thrust: 25,549.51 N — ILLUSTRATIVE', asymmetric)
         self.assertIn('Right rotor thrust: 31,227.17 N — ILLUSTRATIVE', asymmetric)
         self.assertIn('Total rotor thrust: 56,776.68 N — ILLUSTRATIVE', asymmetric)
-        self.assertIn(str(self.fixture), asymmetric)
+        self.assertNotIn(str(self.fixture), asymmetric)
 
     def test_per_side_ct_and_analytic_trajectory(self):
         model = tmpe.LinearCollectiveModel.load(self.fixture)
@@ -822,7 +822,9 @@ class DefaultCollectiveTests(unittest.TestCase):
         self.assertIn('Model: prototype-collective', text)
         self.assertIn('finite number', text)
         self.assertIn('outside provisional-software bounds', text)
-        self.assertIn('source', text)
+        self.assertNotIn('Illustrative fixture:', text)
+        self.assertNotIn('\n  Source:', text)
+        self.assertIn('Basis: sum of left and right rotor-axis magnitudes.', text)
         self.assertIn('left: pilot collective = 6.0 deg; CT = 0.011', text)
         self.assertIn('right: pilot collective = 6.0 deg; CT = 0.011', text)
         self.assertRegex(text, r'HEIGHT ABOVE GROUND\s+: 9.81 m')
