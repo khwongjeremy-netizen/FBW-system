@@ -257,11 +257,6 @@ class Aircraft:
             ('transmission_efficiency', 'relationships.xml', "reported_relationships/relationship[@name='transmission_efficiency']/efficiency", '1', 'Reported mast/engine power ratio; conditional applicability'),
             ('engine_count', 'aircraft.xml', 'aircraft_overview/engine_count', '1', 'Installed engine count'),
             ('rotor_disk_area_ft2', 'rotor.xml', 'proprotor_and_drive_system/rotor_disc_area_per_rotor', 'ft^2', 'Per-rotor disk area'),
-            ('rotor_solidity', 'rotor.xml', 'proprotor_and_drive_system/rotor_solidity', '1', 'Rotor solidity'),
-            ('hover_download_fraction', 'rotor.xml', 'proprotor_and_drive_system/wing_download/fraction', '1', 'Flaps-deflected OGE download divided by total thrust'),
-            ('hover_drive_engine_limit_shp', 'rotor.xml', 'proprotor_and_drive_system/hover_takeoff_drive_limits/engine_power_limit', 'SHP', 'Per-side installed engine power limit at design hover takeoff speed'),
-            ('hover_steady_mast_torque_in_lb', 'rotor.xml', 'proprotor_and_drive_system/hover_takeoff_drive_limits/steady_mast_torque', 'in-lb', 'Per-mast steady torque limit at design hover takeoff speed'),
-            ('hover_limit_mast_torque_in_lb', 'rotor.xml', 'proprotor_and_drive_system/hover_takeoff_drive_limits/limit_mast_torque', 'in-lb', 'Per-mast transient torque limit at design hover takeoff speed'),
         ):
             setattr(self, name, load_parameter(self.diagnostics, name, filename, path, unit, meaning))
         self.nacelle_angle_deg = load_parameter(self.diagnostics, 'nacelle_angle_deg',
@@ -885,70 +880,19 @@ def estimate_proprotor_hover(side, aircraft, environment, *, engine_power_w,
 def report_rated_ideal_hover(aircraft, environment):
     """Conditional rating-based ceiling, separated from live motion and wind."""
     print('\nIDEAL RATED-POWER HOVER SCENARIO — NOT XV-15 PREDICTIONS')
-    print('Each engine supplies one rotor, with engine power capped by the installed takeoff drive limit.')
+    print('Assume each engine supplies its XML takeoff rating to its corresponding rotor; no crossfeed or accessory deduction.')
     print('Apply reported XML transmission efficiency conditionally; assume all mast power becomes ideal induced power (fraction = 1).')
     print('Still-air static OGE disks; entered wind and ground contact are excluded. No takeoff trajectory is inferred.')
-    rating = aircraft.engine_takeoff_shp
-    limit = aircraft.hover_drive_engine_limit_shp
-    engine_power_w = None if rating is None or limit is None else min(rating, limit) * SHP_TO_W
     for side in ('left', 'right'):
+        rating = aircraft.engine_takeoff_shp
         row = estimate_proprotor_hover(side, aircraft, environment,
-            engine_power_w=engine_power_w,
+            engine_power_w=None if rating is None else rating * SHP_TO_W,
             transmission_efficiency=aircraft.transmission_efficiency, ideal_power_fraction=1.0)
         print(f"  {side}: {row['status']} | {row['reason']}")
         for key, unit in (('engine_power_w', 'W'), ('rotor_shaft_power_w', 'W'),
                           ('induced_power_w', 'W'), ('thrust_n', 'N')):
             print(f"    {key}: {format_quantity(row[key], unit)}")
-    print('Equations: Pshaft = eta min(engine rating, installed limit); Pi = fraction Pshaft; A = pi (D/2)^2; T = (Pi sqrt(2 rho A))^(2/3).')
-
-    print('\nSTATIC OGE HOVER EQUILIBRIUM — FLAP 40° / FLAPERON 25°')
-    try:
-        equilibrium = calculate_hover_equilibrium(aircraft, environment)
-    except ValueError as error:
-        print(f'  UNAVAILABLE — {error}')
-        return
-    for label, (value, unit) in equilibrium.items():
-        print(f'  {label}: {format_quantity(value, unit, places=4)}')
-    print(f"  Steady mast torque limit: {format_quantity(aircraft.hover_steady_mast_torque_in_lb, 'in-lb')}")
-    print(f"  Transient mast torque limit: {format_quantity(aircraft.hover_limit_mast_torque_in_lb, 'in-lb')}")
-
-
-def calculate_hover_equilibrium(aircraft, environment):
-    """Design-weight OGE trim with two identical disks sharing thrust equally."""
-    mass = takeoff_mass_kg(aircraft.design_gross)
-    diameter = aircraft.rotor_diameter_ft
-    density = environment.air_density
-    rpm = aircraft.hover_rotor_rpm
-    solidity = aircraft.rotor_solidity
-    download = aircraft.hover_download_fraction
-    for name, value in (('Gross mass', mass), ('Diameter', diameter), ('Density', density),
-                        ('Hover RPM', rpm), ('Solidity', solidity)):
-        if value is None or not math.isfinite(value) or value <= 0:
-            raise ValueError(f'{name} must be finite and positive')
-    if download is None or not 0 <= download < 1:
-        raise ValueError('Hover download fraction must be in [0, 1)')
-
-    radius = diameter * .3048 / 2
-    area = math.pi * radius**2
-    omega = rpm * math.tau / 60
-    weight = mass * G
-    thrust = weight / (2 * (1 - download))
-    induced_velocity = math.sqrt(thrust / (2 * density * area))
-    induced_power = thrust * induced_velocity
-    ct = thrust / (density * area * (omega * radius)**2)
-    return {
-        'Total thrust': (2 * thrust, 'N'),
-        'Thrust per rotor': (thrust, 'N'),
-        'Wing download': (2 * thrust * download, 'N'),
-        'Disk area per rotor': (area, 'm^2'),
-        'Weight-based disk loading': (weight / (2 * area), 'N/m^2'),
-        'Tip speed': (omega * radius, 'm/s'),
-        'Induced velocity': (induced_velocity, 'm/s'),
-        'Ideal induced power per rotor': (induced_power / SHP_TO_W, 'hp'),
-        'Total ideal induced power': (2 * induced_power / SHP_TO_W, 'hp'),
-        'CT': (ct, 'dimensionless'),
-        'CT / solidity': (ct / solidity, 'dimensionless'),
-    }
+    print('Equations: Pshaft = eta Pengine; Pi = fraction Pshaft; A = pi (D/2)^2; T = (Pi sqrt(2 rho A))^(2/3).')
 
 
 def vertical_force_balance(mass_kg, left_thrust_n, right_thrust_n,
