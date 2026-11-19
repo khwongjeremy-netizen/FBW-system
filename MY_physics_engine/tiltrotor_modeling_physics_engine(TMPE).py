@@ -204,7 +204,7 @@ def report_diagnostics(aircraft, flow, aero, takeoff_result=None):
     print('\nTMPE :: DIAGNOSTIC REPORT\nAIRCRAFT DATA')
     for name, row in aircraft.diagnostics.items():
         print(f"  {name}: {row['status']} | {row['meaning']}")
-        print(f"    Source: {DATA_DIR / row['file']} :: {row['path']}")
+        print(f"    Source: {row['file']} :: {row['path']}")
         print(f"    Value: {row['value']!r} {row['unit']} | "
               f"{'used in live physics' if row['used'] else 'not used in live physics'}")
         if row.get('source_unit') != row['unit'] and 'source_unit' in row:
@@ -257,6 +257,9 @@ class Aircraft:
             ('transmission_efficiency', 'relationships.xml', "reported_relationships/relationship[@name='transmission_efficiency']/efficiency", '1', 'Reported mast/engine power ratio; conditional applicability'),
             ('engine_count', 'aircraft.xml', 'aircraft_overview/engine_count', '1', 'Installed engine count'),
             ('rotor_disk_area_ft2', 'rotor.xml', 'proprotor_and_drive_system/rotor_disc_area_per_rotor', 'ft^2', 'Per-rotor disk area'),
+            ('blade_chord_ft', 'rotor.xml', 'proprotor_and_drive_system/blade_chord', 'ft', 'Blade chord converted from inches'),
+            ('hover_download_fraction', 'rotor.xml', 'proprotor_and_drive_system/wing_download/fraction', '1', 'Provisional OGE hover download fraction'),
+            ('hover_drive_engine_limit_shp', 'rotor.xml', 'proprotor_and_drive_system/hover_takeoff_drive_limits/engine_power_limit', 'SHP', 'Per-side installed takeoff engine power reference'),
         ):
             setattr(self, name, load_parameter(self.diagnostics, name, filename, path, unit, meaning))
         self.nacelle_angle_deg = load_parameter(self.diagnostics, 'nacelle_angle_deg',
@@ -1412,9 +1415,12 @@ def write_transition_audit(rows, audit_path):
             writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
             writer.writeheader()
             writer.writerows(rows)
-        print(f'Stage 2 audit CSV ({len(rows)} rows): {stream.name}')
+        audit_display = Path(stream.name)
+        if audit_display.is_absolute():
+            audit_display = audit_display.name
+        print(f'Stage 2 audit CSV ({len(rows)} rows): {audit_display}')
     except OSError as exc:
-        print(f'Stage 2 audit CSV UNAVAILABLE — {exc}')
+        print(f'Stage 2 audit CSV UNAVAILABLE — {exc.strerror or type(exc).__name__}')
 
 
 def report_final_state(transition, takeoff):
@@ -1536,6 +1542,69 @@ def report_takeoff(result):
     print(f"Phase 1 force calculation: {motion['status']}")
 
 
+def report_xv15_calculations(aircraft, takeoff):
+    """Reference calculations for the design configuration, independent of the dynamics."""
+    def show(label, value, unit, *, status='CALCULATED', missing='required input missing or invalid'):
+        if value is None:
+            print(f'  {label}: UNAVAILABLE — {missing}')
+        else:
+            places = 4 if unit == 'dimensionless' else 2
+            print(f'  {label}: {status} — {format_quantity(value, unit, places)}')
+
+    print('\nXV-15 DESIGN-CONFIGURATION CALCULATIONS')
+    diameter_ft = aircraft.rotor_diameter_ft
+    chord_ft = aircraft.blade_chord_ft
+    blades = aircraft.rotor_blades_per_hub
+    rpm = aircraft.hover_rotor_rpm
+    radius_m = diameter_ft * .3048 / 2 if diameter_ft is not None and diameter_ft > 0 else None
+    omega = math.tau * rpm / 60 if rpm is not None and rpm > 0 else None
+    chord_m = chord_ft * .3048 if chord_ft is not None and chord_ft > 0 else None
+    show('Disk area per rotor', None if radius_m is None else math.pi * radius_m**2, 'm²',
+         missing='rotor diameter missing or invalid')
+    show('Hover tip speed', None if radius_m is None or omega is None else omega * radius_m, 'm/s',
+         missing='diameter or hover RPM missing or invalid')
+    show('Geometric solidity', None if radius_m is None or chord_m is None or blades is None or blades <= 0
+         else blades * chord_m / (math.pi * radius_m), 'dimensionless',
+         missing='diameter, chord or blade count missing or invalid')
+
+    weight = takeoff['balance'].get('aircraft_weight_n')
+    download = aircraft.hover_download_fraction
+    if weight is None or download is None or not 0 <= download < 1:
+        show('Conditional hover thrust baseline', None, 'N', missing='weight or download fraction missing or invalid')
+    else:
+        total = weight / (1 - download)
+        print(f'  Hover baseline — provisional {download:.1%} download, flaps deflected, equal rotor sharing.')
+        show('Total rotor thrust required', total, 'N')
+        show('Thrust required per rotor', total / 2, 'N')
+        show('Downward wing download', total * download, 'N')
+        print('  Thrust requirement from weight balance. Pilot collective and blade pitch are unspecified.')
+
+    power_limit = aircraft.hover_drive_engine_limit_shp
+    if power_limit is None or power_limit <= 0 or omega is None:
+        show('Hover shaft torque per rotor', None, 'N·m', missing='installed power reference or hover RPM missing or invalid')
+    else:
+        total_shp = .65 * (2 * power_limit)
+        print(f'  Torque basis — provisional 65% of {2 * power_limit:,.0f} SHP total, treated as mast power with an equal split.')
+        show('Hover shaft torque per rotor', total_shp * SHP_TO_W / (2 * omega), 'N·m', status='APPROXIMATE')
+
+    print('  Phase 1 rotor components (forward/up, nacelles 0° forward and 90° vertical)')
+    angle = takeoff['nacelle_angle_deg']
+    vectors = [rotor_force_body_n(takeoff[side]['value'], angle) for side in ('left', 'right')]
+    for side, vector in zip(('Left', 'Right'), vectors):
+        if vector is None:
+            print(f'  {side}: UNAVAILABLE — rotor thrust or nacelle angle missing')
+        else:
+            print(f'  {side}: CALCULATED from selected model — {format_number(vector[0])} / {format_number(-vector[2])} N')
+    if any(vector is None for vector in vectors):
+        print('  Total: UNAVAILABLE — both rotor projections required')
+    else:
+        forward = sum(vector[0] for vector in vectors)
+        up = -sum(vector[2] for vector in vectors)
+        print(f'  Total: CALCULATED from selected model — {format_number(forward)} / {format_number(up)} N')
+    if takeoff['rotor_model'].startswith('prototype-'):
+        print('  Prototype rotor components are illustrative software-model outputs.')
+
+
 def report_data_status(takeoff, transition, aircraft, polar):
     print('\nDATA STATUS AND BLOCKERS')
     print('XV-15 flight validation: UNAVAILABLE for this model.')
@@ -1565,7 +1634,7 @@ def report_data_status(takeoff, transition, aircraft, polar):
         if takeoff['elapsed_s'] == 0:
             print('Phase 1 takeoff not simulated.')
     if polar is not None:
-        print(f'Wing polar: {polar.status} — {polar.source}')
+        print(f'Wing polar: {polar.status} — {Path(polar.source).name}')
         if polar.user_source:
             print(f'  User-provided source metadata: {polar.user_source}')
     if transition['status'] == 'UNAVAILABLE':
@@ -1582,6 +1651,7 @@ def report_data_status(takeoff, transition, aircraft, polar):
     print('Source-backed XV-15 hover thrust: UNAVAILABLE — no mapped pilot-to-blade pitch datum '
           'or matched rotor version, RPM/tip Mach and atmospheric conditions for an installed-rotor calibration.')
     print(f'Aircraft transition inputs: UNAVAILABLE — {AIRCRAFT_TRANSITION_BLOCKER}')
+    print('XV-15 transition thrust/power maps and validated wing forces: UNAVAILABLE.')
     print('Rotor mast power: UNAVAILABLE — commanded shaft power and power split are unknown.')
     print('Phase 1 wing loads, ground effect and wind response: NOT MODELED.')
     print('Phase 2 rotor inflow/RPM response, ground effect, rotor/wing interference, other airframe loads, '
@@ -1794,6 +1864,7 @@ def main(argv=None):
     transition = simulate_transition(result, aircraft, environment, polar, phase2_duration, args.dt, end_angles)
     report_timed_transition(transition, args.transition_audit)
     report_final_state(transition, result)
+    report_xv15_calculations(aircraft, result)
     report_data_status(result, transition, aircraft, polar)
     if angle_pairs:
         report_transition(sample_nacelle_transition(result, angle_pairs))

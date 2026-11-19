@@ -380,6 +380,31 @@ class VerticalTakeoffTests(unittest.TestCase):
 
 
 class IdealHoverTests(unittest.TestCase):
+    def test_reference_calculations_and_known_rotor_projections(self):
+        aircraft = tmpe.Aircraft()
+        takeoff = tmpe.simulate_takeoff(aircraft, tmpe.Environment())
+        takeoff['nacelle_angle_deg'] = 30
+        takeoff['left']['value'] = 100
+        takeoff['right']['value'] = 200
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            tmpe.report_xv15_calculations(aircraft, takeoff)
+            takeoff['right']['value'] = None
+            tmpe.report_xv15_calculations(aircraft, takeoff)
+        report = output.getvalue()
+        for line in (
+            'Disk area per rotor: CALCULATED — 45.60 m²',
+            'Hover tip speed: CALCULATED — 225.42 m/s',
+            'Geometric solidity: CALCULATED — 0.0891',
+            'Total rotor thrust required: CALCULATED — 62179.44 N',
+            'Thrust required per rotor: CALCULATED — 31089.72 N',
+            'Downward wing download: CALCULATED — 4352.56 N',
+            'Hover shaft torque per rotor: APPROXIMATE — 11960.61 N·m',
+            'Total: CALCULATED from selected model — 259.81 / 150.00 N',
+            'Total: UNAVAILABLE — both rotor projections required',
+        ):
+            self.assertIn(line, report)
+
     def test_analytic_disk_and_power_identity(self):
         # Hypothetical disk: area 2 m², rho 1, vi 3 -> T 36 N, Pi 108 W.
         row = tmpe.ideal_hover_from_induced_power(math.sqrt(8 / math.pi), 1, 108)
