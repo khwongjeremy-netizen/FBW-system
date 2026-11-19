@@ -400,7 +400,9 @@ class IdealHoverTests(unittest.TestCase):
             'Thrust required per rotor: CALCULATED — 31089.72 N',
             'Downward wing download: CALCULATED — 4352.56 N',
             'Hover shaft torque per rotor: APPROXIMATE — 11960.61 N·m',
-            'Total: CALCULATED from selected model — 259.81 / 150.00 N',
+            'Provisional geometry inputs — 25 ft diameter, 3 blades per rotor, 14 in chord, 565 hover RPM.',
+            'Phase 1 rotor components (forward/up) at 30°',
+            'Total: CALCULATED from available thrust — 259.81 / 150.00 N',
             'Total: UNAVAILABLE — both rotor projections required',
         ):
             self.assertIn(line, report)

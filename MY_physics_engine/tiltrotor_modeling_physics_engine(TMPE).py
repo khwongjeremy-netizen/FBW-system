@@ -1556,6 +1556,9 @@ def report_xv15_calculations(aircraft, takeoff):
     chord_ft = aircraft.blade_chord_ft
     blades = aircraft.rotor_blades_per_hub
     rpm = aircraft.hover_rotor_rpm
+    if all(value is not None and value > 0 for value in (diameter_ft, blades, chord_ft, rpm)):
+        print(f'  Provisional geometry inputs — {diameter_ft:g} ft diameter, {blades:g} blades per rotor, '
+              f'{chord_ft * 12:g} in chord, {rpm:g} hover RPM.')
     radius_m = diameter_ft * .3048 / 2 if diameter_ft is not None and diameter_ft > 0 else None
     omega = math.tau * rpm / 60 if rpm is not None and rpm > 0 else None
     chord_m = chord_ft * .3048 if chord_ft is not None and chord_ft > 0 else None
@@ -1587,22 +1590,23 @@ def report_xv15_calculations(aircraft, takeoff):
         print(f'  Torque basis — provisional 65% of {2 * power_limit:,.0f} SHP total, treated as mast power with an equal split.')
         show('Hover shaft torque per rotor', total_shp * SHP_TO_W / (2 * omega), 'N·m', status='APPROXIMATE')
 
-    print('  Phase 1 rotor components (forward/up, nacelles 0° forward and 90° vertical)')
     angle = takeoff['nacelle_angle_deg']
+    angle_display = 'UNAVAILABLE' if angle is None else f'{angle:g}°'
+    print(f'  Phase 1 rotor components (forward/up) at {angle_display}, with 0° forward and 90° vertical.')
+    projection_status = ('CALCULATED from illustrative model' if takeoff['rotor_model'].startswith('prototype-')
+                         else 'CALCULATED from available thrust')
     vectors = [rotor_force_body_n(takeoff[side]['value'], angle) for side in ('left', 'right')]
     for side, vector in zip(('Left', 'Right'), vectors):
         if vector is None:
             print(f'  {side}: UNAVAILABLE — rotor thrust or nacelle angle missing')
         else:
-            print(f'  {side}: CALCULATED from selected model — {format_number(vector[0])} / {format_number(-vector[2])} N')
+            print(f'  {side}: {projection_status} — {format_number(vector[0])} / {format_number(-vector[2])} N')
     if any(vector is None for vector in vectors):
         print('  Total: UNAVAILABLE — both rotor projections required')
     else:
         forward = sum(vector[0] for vector in vectors)
         up = -sum(vector[2] for vector in vectors)
-        print(f'  Total: CALCULATED from selected model — {format_number(forward)} / {format_number(up)} N')
-    if takeoff['rotor_model'].startswith('prototype-'):
-        print('  Prototype rotor components are illustrative software-model outputs.')
+        print(f'  Total: {projection_status} — {format_number(forward)} / {format_number(up)} N')
 
 
 def report_data_status(takeoff, transition, aircraft, polar):
