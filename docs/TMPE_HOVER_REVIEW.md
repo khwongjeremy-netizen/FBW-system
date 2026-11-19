@@ -72,6 +72,7 @@ A conditional isolated actuator-disk hover estimate is possible from existing XM
 | Reported flight-test hover / cruise RPM | 589 / 517 | rotor.xml, test_rotor_speed; distinct operating conditions |
 | Per-engine contingency rating | 1802 SHP, 2 min | engine.xml, engine_data/power_rating |
 | Per-engine takeoff rating | 1550 SHP, 10 min | same; sea-level standard day |
+| Installed takeoff engine power limit | 1460 SHP per side at 565 RPM | rotor.xml, hover_takeoff_drive_limits; NASA TM X-62,407, Table 4.5 |
 | Per-engine military rating | 1401 SHP, 30 min | same |
 | Per-engine continuous rating | 1250 SHP | same; naming discrepancy retained in XML |
 | Engine count | 2 | aircraft.xml, aircraft_overview/engine_count |
@@ -92,7 +93,7 @@ If starting from engine power, additional explicit choices are required: actual 
 * Ideal induced power is the minimum actuator-disk airflow power associated with a thrust. Real induced power can be larger because of nonuniform inflow and other effects; mast power also includes blade profile and other aerodynamic losses.
 * Calculated thrust is an output in newtons, not power and not aircraft net lift.
 
-The API fraction Pi_ideal/Pshaft is a figure-of-merit style closure in hover. It is not a measured fraction of real induced power. No supported value is available in the dataset. A validated model could supply profile power and an induced loss factor instead. The optional scenario explicitly uses fraction = 1, the lossless rotor limit, and conditionally uses the reported 0.93 transmission ratio. It assumes each engine supplies its full takeoff rating to its corresponding mast. It assumes no accessory deduction, crossfeed or additional transmission limits. This is a theoretical ceiling at that assigned power, not a demonstrated achievable XV-15 thrust or a full aircraft upper bound.
+The API fraction Pi_ideal/Pshaft is a figure-of-merit style closure in hover. The optional rated scenario uses fraction = 1 and the 0.93 transmission efficiency from NASA TM X-62,407 §5.1. It assigns one engine to each rotor and caps the 1550 SHP rating at the 1460 SHP installed engine power entry in Table 4.5. After efficiency, this gives 1357.8 SHP per mast for the ideal estimate. [NASA TM X-62,407, pp. 25–26](https://ntrs.nasa.gov/api/citations/19750016648/downloads/19750016648.pdf#page=28)
 
 ## Equations and idealizations
 
@@ -119,7 +120,9 @@ Tests use an arbitrary 10 kg body with hypothetical equal rotor thrusts totaling
 
 ## Usage and replacement boundary
 
-Run the regular script with `--ideal-rated-hover --diagnostics` for a separately labelled conditional estimate and the existing source ledger. The regular takeoff result remains unavailable. No synthetic thrust inputs are added to aircraft XML.
+Run with `--ideal-rated-hover --diagnostics` to print the rated-power estimate, the static OGE equilibrium and their XML inputs. In the 40° flap / 25° flaperon configuration, equilibrium uses gross thrust equal to weight divided by 0.93, with each rotor supplying half. At 13,000 lb and 1.225 kg/m³, the result is 13,978.5 lbf total thrust, 54.73 ft/s induced velocity and 695.5 ideal induced hp per rotor. The power figure covers ideal downwash only. The displayed mast torque limits apply at the 565 RPM hover takeoff condition.
+
+Ground liftoff and transition still need configuration-specific inputs. The outstanding data are the collective gearing schedule and actuator slew rate, the nacelle actuator slew rate, full large-angle airframe polars, and empirical ground-effect and fountain-recirculation curves.
 
 `ideal_hover_from_induced_power()` is independent of aircraft data. `estimate_proprotor_hover()` performs explicit per-side power bookkeeping. `calculate_proprotor()` remains the future validated aircraft-model boundary and now dispatches the explicitly selected fixed-CT prototype; `simulate_takeoff(force_provider=...)` accepts independently established forces at each step. A validated XV-15 rotor model can replace that provider without changing the vertical mechanics. It must establish operating pitch/RPM, thrust/torque behavior, power constraints and applicable wake/ground loads.
 

@@ -432,6 +432,20 @@ class IdealHoverTests(unittest.TestCase):
         self.assertIn('takeoff not simulated', text)
         for label in ('engine_power_w', 'rotor_shaft_power_w', 'induced_power_w', 'thrust_n'):
             self.assertIn(label, text)
+        self.assertIn(f'{1460 * .93 * tmpe.SHP_TO_W:.2f} W', text)
+        self.assertIn('STATIC OGE HOVER EQUILIBRIUM', text)
+
+    def test_design_hover_equilibrium_includes_download(self):
+        aircraft = tmpe.Aircraft()
+        environment = tmpe.Environment(air_density=1.225)
+        row = tmpe.calculate_hover_equilibrium(aircraft, environment)
+        thrust = row['Total thrust'][0]
+        self.assertAlmostEqual(thrust - row['Wing download'][0], 13000 * tmpe.LB_TO_KG * tmpe.G)
+        self.assertAlmostEqual(row['Induced velocity'][0] / .3048, 54.72, delta=.02)
+        self.assertAlmostEqual(row['CT / solidity'][0], .123, places=3)
+        aircraft.hover_download_fraction = 1
+        with self.assertRaisesRegex(ValueError, 'download fraction'):
+            tmpe.calculate_hover_equilibrium(aircraft, environment)
 
 
 class FixedCTPrototypeTests(unittest.TestCase):

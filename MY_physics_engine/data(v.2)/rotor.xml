@@ -22,6 +22,12 @@
     <gear_ratio_engine_to_rotor_mast location="table 4.5, p. 25">35.11:1</gear_ratio_engine_to_rotor_mast>
     
     <gear_ratio_interconnect_shaft location="table 4.5, p. 25">3.10:1</gear_ratio_interconnect_shaft>
+
+    <hover_takeoff_drive_limits location="table 4.5, p. 25">
+      <engine_power_limit unit="SHP">1460</engine_power_limit>
+      <steady_mast_torque unit="in-lb">163000</steady_mast_torque>
+      <limit_mast_torque unit="in-lb">217000</limit_mast_torque>
+    </hover_takeoff_drive_limits>
     
     <design_rotor_speed mode="hover" unit="rpm" tip_speed="740 ft/s" location="table 4.5, p. 25; p. 19">565</design_rotor_speed>
     
@@ -52,7 +58,7 @@
     <!-- Reported hover wing-download penalty.
         Applies to the stated flap/flaperon configuration and
         hover condition; do not assume it applies universally. -->
-    <wing_download>
+    <wing_download location="sec. 5.1, p. 26">
         <fraction>0.07</fraction>
         <flap_angle unit="deg">40</flap_angle>
         <flaperon_angle unit="deg">25</flaperon_angle>
