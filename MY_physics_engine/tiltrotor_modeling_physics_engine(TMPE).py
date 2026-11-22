@@ -1506,7 +1506,7 @@ def report_transition(result):
         print(f'{"SIMULATED TIME":<23}: {format_quantity(state.elapsed_s, "s")}')
     print('\n--- Model limitations ---')
     if result['rotor_model'] == 'prototype-collective':
-        print('Collective-pitch model: illustrative or uncalibrated; see Phase 1 calibration status.')
+        print('Collective-to-thrust model: see the selected Phase 1 calibration status for each rotor.')
     elif result['rotor_model'] == 'prototype-fixed-ct':
         print('Fixed-CT model: illustrative assumption; not validated XV-15 performance.')
     else:
@@ -1580,7 +1580,7 @@ def report_xv15_calculations(aircraft, takeoff):
         show('Total rotor thrust required', total, 'N')
         show('Thrust required per rotor', total / 2, 'N')
         show('Downward wing download', total * download, 'N')
-        print('  Thrust requirement from weight balance. Pilot collective and blade pitch are unspecified.')
+        print('  Thrust requirement from weight balance; this estimate does not use the run’s blade collective-pitch inputs.')
 
     power_limit = aircraft.hover_drive_engine_limit_shp
     if power_limit is None or power_limit <= 0 or omega is None:
@@ -1593,8 +1593,7 @@ def report_xv15_calculations(aircraft, takeoff):
     angle = takeoff['nacelle_angle_deg']
     angle_display = 'UNAVAILABLE' if angle is None else f'{angle:g}°'
     print(f'  Phase 1 rotor components (forward/up) at {angle_display}, with 0° forward and 90° vertical.')
-    projection_status = ('CALCULATED from illustrative model' if takeoff['rotor_model'].startswith('prototype-')
-                         else 'CALCULATED from available thrust')
+    projection_status = 'CALCULATED from selected rotor thrust; calibration shown in model status'
     vectors = [rotor_force_body_n(takeoff[side]['value'], angle) for side in ('left', 'right')]
     for side, vector in zip(('Left', 'Right'), vectors):
         if vector is None:
@@ -1610,8 +1609,8 @@ def report_xv15_calculations(aircraft, takeoff):
 
 
 def report_data_status(takeoff, transition, aircraft, polar):
-    print('\nDATA STATUS AND BLOCKERS')
-    print('XV-15 flight validation: UNAVAILABLE for this model.')
+    print('\nMODEL RESULTS AND DATA STATUS')
+    print('XV-15 flight validation: NOT VALIDATED; calculated results alone do not establish validation.')
     rotors = [takeoff[side] for side in ('left', 'right')]
     model = takeoff['rotor_model']
     statuses = []
@@ -1620,6 +1619,12 @@ def report_data_status(takeoff, transition, aircraft, polar):
         provenance = rotor.get('source_status') or rotor.get('calibration_status') or ''
         status = 'ILLUSTRATIVE; software test only' if 'ILLUSTRATIVE' in provenance else rotor['status']
         statuses.append(status)
+        if model == 'prototype-collective':
+            print(f'{side} collective-pitch input: '
+                  f'{format_quantity(rotor.get("theta_deg"), "deg", places=1)} — blade pitch, separate from nacelle direction.')
+            print(f'{side} collective-to-thrust calibration: '
+                  f'{rotor.get("calibration_status", "NOT REPORTED")}')
+            print(f'  Experimental validation: {rotor.get("experimental_validation_status", "NOT REPORTED")}')
         if value is None:
             print(f'{side} rotor thrust: UNAVAILABLE | model: {model}')
             print(f"  {rotor['reason']}")
@@ -1633,14 +1638,28 @@ def report_data_status(takeoff, transition, aircraft, polar):
     else:
         print(f'Total rotor thrust: UNAVAILABLE — both rotor values are required | model: {model}')
     print('  Basis: sum of left and right rotor-axis magnitudes.')
+    if model != 'prototype-collective':
+        print('Collective-pitch input: NOT USED by the selected rotor model; separate left/right inputs are available in prototype-collective mode.')
     if takeoff['motion']['status'] != 'CALCULATED':
         print(f"Phase 1 blocker: {takeoff['balance']['reason']}")
         if takeoff['elapsed_s'] == 0:
             print('Phase 1 takeoff not simulated.')
     if polar is not None:
-        print(f'Wing polar: {polar.status} — {Path(polar.source).name}')
+        print(f'Wing coefficient table: {polar.status} — {Path(polar.source).name}')
         if polar.user_source:
             print(f'  User-provided source metadata: {polar.user_source}')
+    else:
+        print('Wing coefficients: ILLUSTRATIVE — Phase 2 uses constant CL/CD assumptions, not an AoA-based XV-15 polar.')
+    if transition['rows']:
+        row = transition['rows'][-1]
+        if row['alpha_deg'] is not None:
+            print(f'Wing AoA (last Phase 2 evaluation): CALCULATED — {format_quantity(row["alpha_deg"], "deg")}; coefficient and force availability are separate.')
+        elif polar is None:
+            print('Wing AoA (Phase 2): NOT CALCULATED by the constant-coefficient model.')
+        else:
+            print(f'Wing AoA (last Phase 2 evaluation): NOT CALCULATED — {row["aero_reason"]}')
+    else:
+        print('Wing AoA (Phase 2): NOT EVALUATED — no Phase 2 steps were evaluated.')
     if transition['status'] == 'UNAVAILABLE':
         print(f"Phase 2 blocker: {transition['reason']}")
     elif transition['rows'] and transition['rows'][-1]['aero_reason']:
@@ -1652,10 +1671,14 @@ def report_data_status(takeoff, transition, aircraft, polar):
         record = aircraft.diagnostics[name]
         if record['value'] is None:
             print(f"{name}: UNAVAILABLE — {record['file']} :: {record['path']} — {record['reason']}")
-    print('Source-backed XV-15 hover thrust: UNAVAILABLE — no mapped pilot-to-blade pitch datum '
-          'or matched rotor version, RPM/tip Mach and atmospheric conditions for an installed-rotor calibration.')
-    print(f'Aircraft transition inputs: UNAVAILABLE — {AIRCRAFT_TRANSITION_BLOCKER}')
-    print('XV-15 transition thrust/power maps and validated wing forces: UNAVAILABLE.')
+    print('\nAIRCRAFT DATA AND MODEL LIMITS')
+    if model == 'prototype-collective':
+        print('XV-15 collective-to-thrust calibration: see each rotor’s selected calibration above; blade-pitch input alone does not establish calibrated or validated XV-15 thrust.')
+    else:
+        print('XV-15 collective-to-thrust calibration: NOT USED by the selected rotor model.')
+    print(f'XV-15 transition performance maps: MISSING — {AIRCRAFT_TRANSITION_BLOCKER}')
+    print('Density coverage: full XV-15 rotor/wing performance across densities is not established; the run accepts density as a separate, constant input.')
+    print('Wing force coverage: validated XV-15 forces across AoA and configurations are not established; calculated AoA alone does not supply coefficients.')
     print('Rotor mast power: UNAVAILABLE — commanded shaft power and power split are unknown.')
     print('Phase 1 wing loads, ground effect and wind response: NOT MODELED.')
     print('Phase 2 rotor inflow/RPM response, ground effect, rotor/wing interference, other airframe loads, '
@@ -1706,27 +1729,27 @@ def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, en
         print('Run type: educational aircraft model; experimental validation: NOT VALIDATED')
     print(f'Requested duration: Phase 1 {phase1_s:g} s | Phase 2 {phase2_s:g} s | timestep {dt:g} s')
 
-    print('\nINPUTS')
-    print(f'Air density: {environment.air_density:g} kg/m³ (scenario input; held constant)')
+    print('\nRUN INPUTS')
+    print(f'Air-density input: {environment.air_density:g} kg/m³ (supplied for this run; held constant)')
     print(f'Wind: {environment.windspeed:g} m/s FROM {environment.winddirection:g}° clockwise from north')
     print(f'Temperature: {environment.temperature:g} °C (display only)')
     print(f'Ground elevation (MSL): {environment.altitude:.2f} m (display only)')
     print(f'Design gross (XML): {format_quantity(aircraft.design_gross, "lb")}')
     print(f'Wing area / incidence (XML): {format_quantity(aircraft.wing_area_m2, "m²")} / '
           f'{format_quantity(aircraft.wing_incidence_deg, "°")}')
-    print(f'Phase 1 nacelles: {format_quantity(aircraft.nacelle_angle_deg, "°")} each')
+    print(f'Phase 1 nacelle direction: {format_quantity(aircraft.nacelle_angle_deg, "°")} each (0° forward, 90° up; not blade pitch)')
     print(f'Phase 2 nacelle targets (left/right): {end_angles[0]:g}° / {end_angles[1]:g}° (linear ramps)')
     if model == 'prototype-collective':
         for side in ('left', 'right'):
             rotor = takeoff[side]
             pitch = rotor.get('theta_deg')
             ct = rotor.get('thrust_coefficient')
-            print(f'{side}: pilot collective = {format_quantity(pitch, "deg", places=1)}; '
+            print(f'{side} collective-pitch input: {format_quantity(pitch, "deg", places=1)} (blade pitch); '
                   f'CT = {ct if ct is not None else "UNAVAILABLE"}')
     elif model == 'prototype-fixed-ct':
         print(PROTOTYPE_LABEL)
         ct = takeoff['left']['inputs']['thrust_coefficient']
-        print(f'Fixed CT: {ct if ct is not None else "UNAVAILABLE"}; collective NOT MODELED.')
+        print(f'Fixed CT: {ct if ct is not None else "UNAVAILABLE"}; blade collective-pitch input is not used by this model.')
 
 
 def main(argv=None):
@@ -1828,7 +1851,7 @@ def main(argv=None):
         if args.collective_config is None:
             illustrative_path = PROJECT_DIR.parent / 'tests' / 'fixtures' / 'collective_illustrative.json'
             if not args.allow_illustrative_collective and model.parameters.get('parameter_status') != 'calibrated':
-                print('\nAircraft collective model is UNCALIBRATED / UNAVAILABLE.')
+                print('\nXV-15 collective-to-thrust calibration: UNCALIBRATED in the selected configuration; separate left/right blade-pitch inputs are accepted.')
                 print(model.evaluate(0)['reason'])
                 print('Illustrative coefficients are for SOFTWARE TESTING ONLY; NOT validated XV-15 predictions.')
                 while True:
