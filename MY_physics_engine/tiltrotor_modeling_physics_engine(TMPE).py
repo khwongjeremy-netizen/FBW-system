@@ -1403,6 +1403,23 @@ def report_transition_checkpoints(rows):
 
 
 def write_transition_audit(rows, audit_path):
+    # Export-only ordering and rounding; retain full-precision simulation rows.
+    numeric_groups = (
+        ('phase2_time_s', 'simulation_time_s', 'height_agl_m', 'forward_distance_m',
+         'forward_velocity_mps', 'vertical_velocity_mps', 'mass_kg', 'aircraft_weight_n'),
+        ('left_nacelle_deg', 'right_nacelle_deg', 'left_thrust_n', 'right_thrust_n',
+         'left_rotor_forward_n', 'left_rotor_up_n', 'right_rotor_forward_n', 'right_rotor_up_n',
+         'total_rotor_forward_n', 'total_rotor_up_n'),
+        ('wind_speed_mps', 'wind_from_deg', 'wind_forward_mps', 'wind_east_mps',
+         'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3',
+         'wing_area_m2', 'wing_incidence_deg', 'gamma_deg', 'alpha_deg', 'q_pa',
+         'cl', 'cd', 'lift_n', 'drag_n', 'wing_forward_n', 'wing_up_n'),
+        ('net_forward_n', 'net_up_n', 'forward_acceleration_mps2', 'vertical_acceleration_mps2'),
+    )
+    fields = list(dict.fromkeys(key for row in rows for key in row))
+    ordered = [key for group in numeric_groups for key in group if key in fields]
+    # Preserve every status/source/validation field, including future additions.
+    fieldnames = ordered + [key for key in fields if key not in ordered]
     try:
         if audit_path is None:
             output_dir = Path('output')
@@ -1412,9 +1429,13 @@ def write_transition_audit(rows, audit_path):
         else:
             stream = audit_path.open('x', newline='', encoding='utf-8')
         with stream:
-            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(
+                {key: format(value, '.4g') if isinstance(value, (int, float))
+                 and not isinstance(value, bool) else value
+                 for key, value in row.items()}
+                for row in rows)
         audit_display = Path(stream.name)
         if audit_display.is_absolute():
             audit_display = audit_display.name
