@@ -1359,47 +1359,71 @@ def report_timed_transition(result, audit_path=None):
     if not rows:
         return
 
-    if simplified:
-        print('\nILLUSTRATIVE time history (forward and up positive)')
-        columns = (
-            ('t (s)', 'phase2_time_s'), ('L tilt (°)', 'left_nacelle_deg'), ('R tilt (°)', 'right_nacelle_deg'),
-            ('Rotor Fx (N)', 'total_rotor_forward_n'), ('Rotor Fz (N)', 'total_rotor_up_n'),
-            ('Lift (N)', 'lift_n'), ('Drag (N)', 'drag_n'),
-            ('Net Fx (N)', 'net_forward_n'), ('Net Fz (N)', 'net_up_n'),
-            ('ax (m/s²)', 'forward_acceleration_mps2'), ('az (m/s²)', 'vertical_acceleration_mps2'),
-            ('Vx (m/s)', 'forward_velocity_mps'), ('x (m)', 'forward_distance_m'), ('AGL (m)', 'height_agl_m'),
-        )
-        print(' '.join(f'{label:>12}' for label, _ in columns))
-        for row in rows:
-            print(' '.join(f'{("UNAVAILABLE" if row[key] is None else format_number(row[key], 3)):>12}'
-                           for _, key in columns))
-            if row['aero_reason']:
-                print(f"  Wing forces UNAVAILABLE — {row['aero_reason']}")
-    else:
-        report_transition_checkpoints(rows)
+    report_transition_checkpoints(rows)
     write_transition_audit(rows, audit_path)
 
 
 def report_transition_checkpoints(rows):
-    print('ILLUSTRATIVE — software test only. Phase 1 thrust magnitudes held fixed with one wing polar.')
-    print('\nCheckpoints (nearest evaluated timesteps)')
-    columns = (
-        ('t (s)', 'phase2_time_s'), ('L tilt (°)', 'left_nacelle_deg'),
-        ('R tilt (°)', 'right_nacelle_deg'), ('Air (m/s)', 'airspeed_mps'),
-        ('AoA (°)', 'alpha_deg'), ('AGL (m)', 'height_agl_m'),
-        ('Fwd (m/s)', 'forward_velocity_mps'), ('Up (m/s)', 'vertical_velocity_mps'),
-    )
-    print(' '.join(f'{label:>11}' for label, _ in columns))
-    if len(rows) <= 5:
-        checkpoints = rows
-    else:
-        last_time = rows[-1]['phase2_time_s']
-        targets = (last_time * fraction for fraction in (.25, .5, .75))
-        checkpoints = [rows[0], *(min(rows, key=lambda row: abs(row['phase2_time_s'] - target))
-                                  for target in targets), rows[-1]]
-    for row in checkpoints:
-        print(' '.join(f'{format_number(row[key], 3):>11}' for _, key in columns))
-    print('— in checkpoints indicates unavailable data.')
+    print('ILLUSTRATIVE / SOFTWARE-TEST ONLY — not validated XV-15 flight performance.')
+    print('Checkpoints: start, every 2.5 s, end; nearest evaluated timesteps, no interpolation.')
+    print('Forward and upward values are positive in their named directions.')
+    last_time = rows[-1]['phase2_time_s']
+    targets = [2.5 * step for step in range(1, math.ceil(last_time / 2.5))]
+    indices = [0, *(min(range(len(rows)), key=lambda i: abs(rows[i]['phase2_time_s'] - target))
+                    for target in targets), len(rows) - 1]
+    checkpoints = [rows[i] for i in dict.fromkeys(indices)]
+
+    def number(value):
+        if value is None or value == '':
+            return '—'
+        if value == 0:
+            return '0'
+        text = format(value, '.3g')
+        if value and 0.001 <= abs(value) < 1e6 and 'e' in text:
+            text = format(float(text), f'.{max(0, 2 - math.floor(math.log10(abs(value))))}f')
+        return text
+
+    asymmetric = any(row['left_nacelle_deg'] != row['right_nacelle_deg'] for row in checkpoints)
+
+    def angle(row):
+        left = number(row['left_nacelle_deg'])
+        return left + '/' + number(row['right_nacelle_deg']) if asymmetric else left
+
+    def table(title, columns):
+        print('\n' + title)
+        values = [[getter(row) for _, getter in columns] for row in checkpoints]
+        widths = [max(len(label), *(len(row[i]) for row in values))
+                  for i, (label, _) in enumerate(columns)]
+        print('  '.join(label.rjust(width) for (label, _), width in zip(columns, widths)))
+        print('  '.join('—' * width for width in widths))
+        for row in values:
+            print('  '.join(value.rjust(width) for value, width in zip(row, widths)))
+
+    def field(key):
+        return lambda row: number(row[key])
+
+    table('TRANSITION CHECKPOINTS', (
+        ('t (s)', field('phase2_time_s')),
+        ('Tilt L/R (deg)' if asymmetric else 'Tilt (deg)', angle),
+        ('AGL (m)', field('height_agl_m')),
+        ('Fwd (m/s)', field('forward_velocity_mps')),
+        ('Up (m/s)', field('vertical_velocity_mps')),
+        ('Air (m/s)', field('airspeed_mps')),
+    ))
+    table('FORCE CHECKPOINTS — upward positive', (
+        ('t (s)', field('phase2_time_s')),
+        ('Rotor up (N)', field('total_rotor_up_n')),
+        ('Lift (N)', field('lift_n')),
+        ('Net up (N)', field('net_up_n')),
+        ('a up (m/s²)', field('vertical_acceleration_mps2')),
+    ))
+    print('Tilt = nacelle direction; L/R = left/right when different. — = unavailable, not zero.')
+    print('Lift is wing lift magnitude; net upward force uses the modeled vertical components.')
+    for status in dict.fromkeys(row['aero_status'] for row in checkpoints):
+        print('Wing model status: ' + status)
+    for reason in dict.fromkeys(row['aero_reason'] for row in checkpoints if row['aero_reason']):
+        print('Wing force limitation: ' + reason)
+
 
 
 def write_transition_audit(rows, audit_path):
