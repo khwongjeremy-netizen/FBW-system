@@ -46,12 +46,17 @@ stall and approximations above stall (pp. 26–27).
   is required. The report calls for interpolation between the endpoint mast
   angles (p. 25). TMPE linearly interpolates there only when both endpoint
   configurations support the query, and labels the result interpolated.
+  Add `--transition-mast-endpoint-fallback` to allow a mast-angle estimate
+  when an interior lookup cannot interpolate. The usable endpoint must
+  supply both CL and CD at the requested AoA, flap setting and Mach, and
+  lie within 5° by default. Pass a value such as
+  `--transition-mast-endpoint-fallback 3` to change the maximum gap in degrees.
 - **Angle of attack.** The report's freestream equation uses fuselage AoA
   with a rotor-flowfield correction (p. A-70). TMPE omits that correction
   and uses fuselage AoA `alpha_W = -gamma` for its level aircraft.
   Lift and drag are each evaluated at that same angle, using their own
-  adjacent defined rows when interpolation is needed. An unavailable
-  coefficient blocks the force calculation and stops Phase 2 advancement.
+  adjacent defined rows when interpolation is needed. If the lookup cannot
+  supply both coefficients, the force calculation and Phase 2 advancement stop.
 - **Flaps and Mach.** `--transition-flaps FLAP:FLAPERON` holds one setting
   for the run. The default is `40:25`. The other available settings are
   `0:0`, `20:12.5`, and `75:47` (p. A-133). The lookup matches the flap pair
@@ -133,9 +138,10 @@ Phase 2 advances no time, the final state is explicitly attributed to Phase 1.
 All evaluated rows are saved to a unique `output/stage2_audit_*.csv`
 in the working directory. Use `--transition-audit` to choose a new file path.
 The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
-and aerodynamic provenance. NASA lookup rows include AoA, report mast angle,
-Mach, flap/flaperon setting, reference area, and source and interpolation
-status. Blank numerical cells represent unavailable
+and aerodynamic provenance. NASA lookup rows include AoA, requested report
+mast angle, Mach, flap/flaperon setting, reference area, source and lookup
+status. When a single mast table is used, the CSV also records its angle and
+the angular gap. Blank numerical cells represent unavailable
 quantities. A preflight block before any step is reported on the console.
 
 ## Primary-source review

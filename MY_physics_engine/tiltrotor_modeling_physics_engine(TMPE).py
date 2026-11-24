@@ -1144,6 +1144,7 @@ class XV15WingPylonPolar:
     flap_pair: tuple
     lift_tables: tuple
     drag_tables: tuple
+    mast_endpoint_max_gap_deg: float | None = None
 
     source = 'NASA CR-166536 Appendix B'
     status = 'NASA REPORT DATA / FREESTREAM ESTIMATE'
@@ -1151,12 +1152,16 @@ class XV15WingPylonPolar:
     # GTRS area documented in NASA TM-4448, Appendix A, citing CR-166536.
     reference_area_m2 = 181.0 * 0.09290304
 
+    def __post_init__(self):
+        if self.mast_endpoint_max_gap_deg is not None:
+            require_finite('Mast endpoint fallback gap in degrees', self.mast_endpoint_max_gap_deg, 0)
+
     @classmethod
-    def load(cls, flap_pair):
+    def load(cls, flap_pair, *, mast_endpoint_max_gap_deg=None):
         data = runpy.run_path(str(DATA_DIR / 'xv15_wing_pylon_data.py'))
         lift, drag = (tuple(block for block in data[name] if block[3] == flap_pair)
                       for name in ('LIFT_TABLES', 'DRAG_TABLES'))
-        return cls(flap_pair, lift, drag)
+        return cls(flap_pair, lift, drag, mast_endpoint_max_gap_deg)
 
     @staticmethod
     def sample(tables, alpha, beta, mach):
@@ -1193,15 +1198,36 @@ class XV15WingPylonPolar:
         # CR-166536 p. 25 calls for mast-angle interpolation. Evaluate AoA
         # on each eligible endpoint first, then blend at the requested mast angle.
         masts = (beta,) if beta in (0, 90) else (0, 90)
+        coefficient_samples = {
+            name: [self.sample(tables, alpha, mast, mach) for mast in masts]
+            for name, tables in (('CL', self.lift_tables), ('CD', self.drag_tables))
+        }
+        missing = next(((name, mast) for name, samples in coefficient_samples.items()
+                        for mast, sample in zip(masts, samples) if sample is None), None)
+        status = 'NASA REPORT DATA'
+        if missing is not None:
+            name, missing_mast = missing
+            reason = (f'NASA report {name} unavailable at AoA {alpha:.6g} deg, '
+                      f'Mach {mach:.6g}: required table mast {missing_mast:g} deg '
+                      f'(requested mast {beta:.6g} deg)')
+            max_gap = self.mast_endpoint_max_gap_deg
+            if len(masts) == 1 or max_gap is None:
+                return None, reason
+            endpoint = 90 - missing_mast
+            index = masts.index(endpoint)
+            if any(samples[index] is None for samples in coefficient_samples.values()):
+                return None, reason
+            gap = abs(beta - endpoint)
+            if gap > max_gap:
+                return None, (f'{reason}. Complete table mast {endpoint:g} deg is {gap:.6g} deg '
+                              f'from the request, exceeding the {max_gap:g} deg fallback limit')
+            masts = (endpoint,)
+            coefficient_samples = {name: [samples[index]] for name, samples in coefficient_samples.items()}
+            status = 'NASA endpoint data used as mast-angle estimate'
+
         coefficients, sources = [], []
         aoa_interpolated = False
-        for name, tables in (('CL', self.lift_tables), ('CD', self.drag_tables)):
-            samples = [self.sample(tables, alpha, mast, mach) for mast in masts]
-            for mast, sample in zip(masts, samples):
-                if sample is None:
-                    return None, (f'NASA report {name} unavailable at AoA {alpha:.6g} deg, '
-                                  f'Mach {mach:.6g}: required table mast {mast:g} deg '
-                                  f'(requested mast {beta:.6g} deg)')
+        for name, samples in coefficient_samples.items():
             value = samples[0][0]
             if len(samples) == 2:
                 value += (beta / 90) * (samples[1][0] - value)
@@ -1210,10 +1236,10 @@ class XV15WingPylonPolar:
             sources.append(f'{name} ' + ', '.join(pages))
             aoa_interpolated |= any(sample[2] for sample in samples)
         axes = [axis for axis, used in (('AoA', aoa_interpolated), ('mast angle', len(masts) == 2)) if used]
-        status = 'NASA REPORT DATA'
         if axes:
             status += ' / INTERPOLATED (' + ' and '.join(axes) + ')'
-        return (coefficients, status, self.source + ' — ' + '; '.join(sources)), ''
+        table_mast = masts[0] if len(masts) == 1 else None
+        return (coefficients, status, self.source + ' — ' + '; '.join(sources), table_mast), ''
 
 
 def transition_wing_forces(state, aircraft, environment, polar):
@@ -1237,7 +1263,8 @@ def transition_wing_forces(state, aircraft, environment, polar):
                aero_status='UNAVAILABLE', aero_reason='')
     if nasa:
         flap, flaperon = polar.flap_pair
-        row.update(beta_m_deg=None, mach=None, flap_deg=flap, flaperon_deg=flaperon,
+        row.update(beta_m_deg=None, table_mast_deg=None, mast_angle_gap_deg=None,
+                   mach=None, flap_deg=flap, flaperon_deg=flaperon,
                    wing_pylon_lookup_status='UNAVAILABLE')
     for label, value, minimum in (
         ('Wind speed', environment.windspeed, 0),
@@ -1301,7 +1328,9 @@ def transition_wing_forces(state, aircraft, environment, polar):
         if selected is None:
             row['aero_reason'] = reason
             return row
-        coefficients, lookup_status, row['aero_source'] = selected
+        coefficients, lookup_status, row['aero_source'], table_mast = selected
+        if table_mast is not None:
+            row.update(table_mast_deg=table_mast, mast_angle_gap_deg=abs(beta - table_mast))
         row['wing_pylon_lookup_status'] = lookup_status
         row['aero_status'] = lookup_status + ' / FREESTREAM ESTIMATE'
     else:
@@ -1439,7 +1468,7 @@ def report_transition_equations(simplified=False, nasa=False):
         print('gamma = atan2(V_air_up, V_air_forward).')
         if nasa:
             print('NASA freestream lookup: alpha_W = -gamma, beta_m = 90 deg - nacelle angle.')
-            print('S = 181 ft²; CL/CD use matched report conditions and in-range interpolation.')
+            print('S = 181 ft². CL/CD use matched AoA, flap and Mach coverage at the selected mast endpoints.')
         else:
             print('Wing AoA = incidence - gamma; CL/CD interpolated within the supplied table.')
         print('Wing forward = -L*sin(gamma) - D*cos(gamma); wing up = L*cos(gamma) - D*sin(gamma).')
@@ -1484,7 +1513,11 @@ def report_transition_checkpoints(rows):
     targets = [2.5 * step for step in range(1, math.ceil(last_time / 2.5))]
     indices = [0, *(min(range(len(rows)), key=lambda i: abs(rows[i]['phase2_time_s'] - target))
                     for target in targets), len(rows) - 1]
-    checkpoints = [rows[i] for i in dict.fromkeys(indices)]
+    first_estimate = next((i for i, row in enumerate(rows) if row.get('mast_angle_gap_deg')), None)
+    if first_estimate is not None:
+        indices.append(first_estimate)
+        print('Checkpoints also include the first mast-angle estimate.')
+    checkpoints = [rows[i] for i in sorted(set(indices))]
 
     def number(value):
         if value is None or value == '':
@@ -1539,7 +1572,9 @@ def report_transition_checkpoints(rows):
     if nasa:
         first = rows[0]
         print(f'NASA flap/flaperon setting: {first["flap_deg"]:g}°/{first["flaperon_deg"]:g}° throughout Phase 2.')
-        lookup_columns += (('Mast (deg)', field('beta_m_deg')), ('Mach', field('mach')))
+        lookup_columns += (('Requested mast (deg)', field('beta_m_deg')),
+                           ('Table mast (deg)', field('table_mast_deg')),
+                           ('Mast gap (deg)', field('mast_angle_gap_deg')), ('Mach', field('mach')))
     table('WING-PYLON DRAG CHECKPOINTS' if nasa else 'WING DRAG CHECKPOINTS', lookup_columns + (
         ('CL', field('cl')),
         ('CD', field('cd')),
@@ -1570,7 +1605,8 @@ def write_transition_audit(rows, audit_path):
         ('wind_speed_mps', 'wind_from_deg', 'wind_forward_mps', 'wind_east_mps',
          'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3',
          'wing_area_m2', 'wing_incidence_deg', 'gamma_deg', 'alpha_deg',
-         'beta_m_deg', 'flap_deg', 'flaperon_deg', 'mach', 'q_pa', 'aero_reference_area_m2',
+         'beta_m_deg', 'table_mast_deg', 'mast_angle_gap_deg',
+         'flap_deg', 'flaperon_deg', 'mach', 'q_pa', 'aero_reference_area_m2',
          'cl', 'cd', 'lift_n', 'drag_n', 'wing_forward_n', 'wing_up_n'),
         ('net_forward_n', 'net_up_n', 'forward_acceleration_mps2', 'vertical_acceleration_mps2'),
     )
@@ -1945,6 +1981,8 @@ def main(argv=None):
                             help='use the legacy constant CL/CD software demonstration')
     parser.add_argument('--transition-flaps', choices=('0:0', '20:12.5', '40:25', '75:47'),
                         metavar='FLAP:FLAPERON', help='fixed NASA flap/flaperon pair in degrees (default 40:25)')
+    parser.add_argument('--transition-mast-endpoint-fallback', type=float, nargs='?', const=5.0,
+                        metavar='MAX_GAP_DEG', help='allow a NASA mast endpoint estimate within MAX_GAP_DEG (default 5 when enabled)')
     parser.add_argument('--polar-source', help='source metadata for the supplied wing coefficient table')
     parser.add_argument('--transition-audit', type=Path, help='new CSV path; default output/stage2_audit_*.csv')
     parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
@@ -1982,6 +2020,8 @@ def main(argv=None):
         parser.error('--polar-source requires --transition-polar')
     if args.transition_flaps and (args.transition_polar or args.illustrative_transition):
         parser.error('--transition-flaps applies only to the NASA wing-pylon lookup')
+    if args.transition_mast_endpoint_fallback is not None and (args.transition_polar or args.illustrative_transition):
+        parser.error('--transition-mast-endpoint-fallback applies only to the NASA wing-pylon lookup')
     polar = None
     if args.transition_polar is not None:
         try:
@@ -1991,9 +2031,11 @@ def main(argv=None):
     elif not args.illustrative_transition:
         flap_pair = tuple(map(float, (args.transition_flaps or '40:25').split(':')))
         try:
-            polar = XV15WingPylonPolar.load(flap_pair)
+            polar = XV15WingPylonPolar.load(flap_pair, mast_endpoint_max_gap_deg=args.transition_mast_endpoint_fallback)
         except OSError as exc:
             parser.error(f'NASA wing-pylon data unavailable: {exc}')
+        except ValueError as exc:
+            parser.error(str(exc))
     print('TMPE :: XV-15 HELICOPTER TAKEOFF')
     aircraft = Aircraft()
     state = AircraftState()
