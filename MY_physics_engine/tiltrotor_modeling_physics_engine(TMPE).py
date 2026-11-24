@@ -1133,6 +1133,8 @@ SIMPLIFIED_TRANSITION_LABEL = 'SIMPLIFIED ILLUSTRATIVE TRANSITION'
 # Editable software-test assumptions. CL and CD are dimensionless.
 SIMPLIFIED_TRANSITION_CL = 0.50
 SIMPLIFIED_TRANSITION_CD = 0.08
+XV15_WING_PYLON_DRAG_SOURCE = 'NASA CR-166536, Appendix B, Tables 4-III and 4-IV'
+XV15_WING_PYLON_DRAG_STATUS = 'UNAVAILABLE: numerical source rows not verified'
 
 
 def transition_wing_forces(state, aircraft, environment, polar):
@@ -1150,7 +1152,9 @@ def transition_wing_forces(state, aircraft, environment, polar):
                wing_incidence_deg=aircraft.wing_incidence_deg,
                aero_source=SIMPLIFIED_TRANSITION_LABEL if polar is None else polar.source,
                aero_user_source=None if polar is None else polar.user_source, aero_validation='UNVALIDATED',
-               aero_status='UNAVAILABLE', aero_reason='')
+               aero_status='UNAVAILABLE', aero_reason='',
+               xv15_wing_pylon_drag_source=XV15_WING_PYLON_DRAG_SOURCE,
+               xv15_wing_pylon_drag_status=XV15_WING_PYLON_DRAG_STATUS)
     for label, value, minimum in (
         ('Wind speed', environment.windspeed, 0),
         ('Wind FROM direction', environment.winddirection, None),
@@ -1344,6 +1348,7 @@ AIRCRAFT_TRANSITION_BLOCKER = (
 def report_timed_transition(result, audit_path=None):
     print('\nPHASE 2 — TIMED TRANSITION')
     print('XV-15 aircraft transition: UNAVAILABLE.')
+    print(f'{XV15_WING_PYLON_DRAG_SOURCE}: {XV15_WING_PYLON_DRAG_STATUS}')
     simplified = result['simplified']
     if simplified:
         print(SIMPLIFIED_TRANSITION_LABEL)
@@ -1417,6 +1422,18 @@ def report_transition_checkpoints(rows):
         ('Net up (N)', field('net_up_n')),
         ('a up (m/s²)', field('vertical_acceleration_mps2')),
     ))
+    table('WING DRAG CHECKPOINTS', (
+        ('t (s)', field('phase2_time_s')),
+        ('Tilt L/R (deg)' if asymmetric else 'Tilt (deg)', angle),
+        ('AoA (deg)', field('alpha_deg')),
+        ('CD', field('cd')),
+        ('q (Pa)', field('q_pa')),
+        ('S (m²)', field('wing_area_m2')),
+        ('Drag (N)', field('drag_n')),
+    ))
+    for source in dict.fromkeys(row['aero_source'] for row in checkpoints):
+        print('Wing coefficient source: ' + source)
+    print('Wing force calculations exclude rotor-wake effects.')
     print('Tilt = nacelle direction; L/R = left/right when different. — = unavailable, not zero.')
     print('Lift is wing lift magnitude; net upward force uses the modeled vertical components.')
     for status in dict.fromkeys(row['aero_status'] for row in checkpoints):

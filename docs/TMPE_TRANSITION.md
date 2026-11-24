@@ -27,7 +27,7 @@ Edit `SIMPLIFIED_TRANSITION_CL` and `SIMPLIFIED_TRANSITION_CD` in the TMPE
 script to change them. Rotor thrust magnitudes carry over from the selected
 Phase 1 model. Dynamic pressure uses the existing planar wind convention.
 The simplified net forces are rotor forward force minus drag and rotor up
-force plus lift minus weight. Each evaluated timestep appears in the console.
+force plus lift minus weight. The console shows checkpoints and the audit CSV records each evaluated timestep.
 
 To use a tabulated polar, pass `--transition-polar path/to/wing.csv` with
 the header `alpha_deg,cl,cd`.
@@ -42,6 +42,39 @@ throughout the conversion.
 Every supplied table is marked USER-SUPPLIED / UNVALIDATED. The optional
 `--polar-source` text is stored as user-provided metadata, separately from
 validation status. The program does not infer CL or CD from curve descriptions.
+
+## NASA CR-166536 wing-pylon drag availability
+
+The source-backed model is **unavailable**. Appendix A p. A-47 identifies
+Tables 4-III and 4-IV as the numerical sources for dimensionless wing-pylon
+`C_DWP` as a function of `alpha_W`, `beta_m`, `delta_F`, and `M_N`. The
+accessible report text did not provide reliably extractable numerical rows
+from either table. Phase 2 uses the existing illustrative constants or the
+user-supplied AoA-only CSV. Its console and audit distinguish those
+coefficients from the unavailable NASA model. [NASA CR-166536](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf)
+
+- **Mast angle.** Appendix A p. A-50 defines `beta_m` as 0° in helicopter
+  mode and 90° in airplane mode. Figure 11 uses `i_N`, with the same endpoint
+  convention as TMPE. For the report's mast-angle input,
+  `beta_m_deg = 90 - nacelle_deg`.
+- **AoA and area.** Appendix A p. A-70 computes freestream wing-pylon AoA
+  from fuselage AoA with a rotor-flowfield correction. With that correction
+  omitted, the equation uses fuselage AoA, so TMPE's current incidence-adjusted
+  wing AoA cannot be reused as the report input without mapping its datum.
+  The report uses `D_WP = q_WFS * S_WFS * C_DWPFS` with
+  `S_WFS = S_W - S_iWL - S_iWR`. With wake effects excluded, the formula
+  reduces to full wing area. Verify the report's XV-15 `S_W` value against
+  TMPE's 169 ft² before loading coefficients.
+- **Flap and Mach.** The report defines `delta_F` as a flap-position
+  indicator and `M_N` as dimensionless Mach (p. A-50). The selector lists
+  flap/flaperon pairs 0°/0°, 20°/12.5°, 40°/25°, and 75°/47° (p. A-133).
+  The exact table breakpoints and which combinations have data still need
+  confirmation. The report describes wind-tunnel-based values up to stall
+  and approximations above stall (pp. 26–27).
+- **Data required.** Obtain readable Tables 4-III and 4-IV, with headings,
+  notes, and matched CD and condition rows. Check Tables 4-I and 4-II for
+  matching CL. Figure 11 is a visual trend check. A plot of source and
+  interpolated curves requires the numerical rows.
 
 ## Data availability
 
