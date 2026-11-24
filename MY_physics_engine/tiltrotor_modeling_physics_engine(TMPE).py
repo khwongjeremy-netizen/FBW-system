@@ -1200,7 +1200,8 @@ class XV15WingPylonPolar:
             for mast, sample in zip(masts, samples):
                 if sample is None:
                     return None, (f'NASA report {name} unavailable at AoA {alpha:.6g} deg, '
-                                  f'mast {mast:g} deg, Mach {mach:.6g}')
+                                  f'Mach {mach:.6g}: required table mast {mast:g} deg '
+                                  f'(requested mast {beta:.6g} deg)')
             value = samples[0][0]
             if len(samples) == 2:
                 value += (beta / 90) * (samples[1][0] - value)
