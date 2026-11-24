@@ -26,7 +26,9 @@
 
 from pathlib import Path
 import argparse
+from bisect import bisect_left
 import csv
+import runpy
 import tempfile
 import json
 import xml.etree.ElementTree as ET
@@ -1133,28 +1135,109 @@ SIMPLIFIED_TRANSITION_LABEL = 'SIMPLIFIED ILLUSTRATIVE TRANSITION'
 # Editable software-test assumptions. CL and CD are dimensionless.
 SIMPLIFIED_TRANSITION_CL = 0.50
 SIMPLIFIED_TRANSITION_CD = 0.08
-XV15_WING_PYLON_DRAG_SOURCE = 'NASA CR-166536, Appendix B, Tables 4-III and 4-IV'
-XV15_WING_PYLON_DRAG_STATUS = 'UNAVAILABLE: numerical source rows not verified'
+
+
+@dataclass(frozen=True)
+class XV15WingPylonPolar:
+    """NASA report inputs for one fixed flap/flaperon setting."""
+
+    flap_pair: tuple
+    lift_tables: tuple
+    drag_tables: tuple
+
+    source = 'NASA CR-166536 Appendix B'
+    status = 'NASA REPORT DATA / FREESTREAM ESTIMATE'
+    user_source = None
+    # GTRS area documented in NASA TM-4448, Appendix A, citing CR-166536.
+    reference_area_m2 = 181.0 * 0.09290304
+
+    @classmethod
+    def load(cls, flap_pair):
+        data = runpy.run_path(str(DATA_DIR / 'xv15_wing_pylon_data.py'))
+        lift, drag = (tuple(block for block in data[name] if block[3] == flap_pair)
+                      for name in ('LIFT_TABLES', 'DRAG_TABLES'))
+        return cls(flap_pair, lift, drag)
+
+    @staticmethod
+    def sample(tables, alpha, beta, mach):
+        """Evaluate one coefficient on its original AoA grid."""
+        samples = {}
+        for table, page, mast, _, mach_range, values in tables:
+            if mast != beta or not mach_range[0] <= mach <= mach_range[1]:
+                continue
+            for angle, value in values.items():
+                entries = samples.setdefault(angle, {})
+                if value is not None:
+                    entries.setdefault(value, set()).add(f'Table {table} p. {page}')
+        angles = sorted(samples)
+        index = bisect_left(angles, alpha)
+        if index < len(angles) and angles[index] == alpha:
+            entries = samples[alpha]
+            if len(entries) == 1:
+                value, sources = next(iter(entries.items()))
+                return value, sources, False
+            return None
+        if not 0 < index < len(angles):
+            return None
+        lower, upper = angles[index - 1:index + 1]
+        if len(samples[lower]) != 1 or len(samples[upper]) != 1:
+            return None
+        first, first_sources = next(iter(samples[lower].items()))
+        last, last_sources = next(iter(samples[upper].items()))
+        fraction = (alpha - lower) / (upper - lower)
+        return first + fraction * (last - first), first_sources | last_sources, True
+
+    def evaluate(self, alpha, beta, mach):
+        if not 0 <= beta <= 90:
+            return None, 'Report mast angle outside [0, 90] deg'
+        # CR-166536 p. 25 calls for mast-angle interpolation. Evaluate AoA
+        # on each eligible endpoint first, then blend at the requested mast angle.
+        masts = (beta,) if beta in (0, 90) else (0, 90)
+        coefficients, sources = [], []
+        aoa_interpolated = False
+        for name, tables in (('CL', self.lift_tables), ('CD', self.drag_tables)):
+            samples = [self.sample(tables, alpha, mast, mach) for mast in masts]
+            for mast, sample in zip(masts, samples):
+                if sample is None:
+                    return None, (f'NASA report {name} unavailable at AoA {alpha:.6g} deg, '
+                                  f'mast {mast:g} deg, Mach {mach:.6g}')
+            value = samples[0][0]
+            if len(samples) == 2:
+                value += (beta / 90) * (samples[1][0] - value)
+            coefficients.append(value)
+            pages = sorted(set().union(*(sample[1] for sample in samples)))
+            sources.append(f'{name} ' + ', '.join(pages))
+            aoa_interpolated |= any(sample[2] for sample in samples)
+        axes = [axis for axis, used in (('AoA', aoa_interpolated), ('mast angle', len(masts) == 2)) if used]
+        status = 'NASA REPORT DATA'
+        if axes:
+            status += ' / INTERPOLATED (' + ' and '.join(axes) + ')'
+        return (coefficients, status, self.source + ' — ' + '; '.join(sources)), ''
 
 
 def transition_wing_forces(state, aircraft, environment, polar):
     """North-facing level x/up plane. Lift points toward up at gamma = 0.
 
-    V_air = V_ground - V_wind in the plane. Gamma = atan2(up, forward),
-    wing alpha = incidence - gamma. L acts along (-sin gamma, cos gamma)
+    V_air = V_ground - V_wind in the plane. Gamma = atan2(up, forward).
+    The NASA lookup uses alpha = -gamma. The user CSV uses incidence - gamma.
+    L acts along (-sin gamma, cos gamma)
     and D along (-cos gamma, -sin gamma). East wind is outside this model.
     """
+    nasa = isinstance(polar, XV15WingPylonPolar)
+    area = polar.reference_area_m2 if nasa else aircraft.wing_area_m2
     row = dict(wind_speed_mps=environment.windspeed, wind_from_deg=environment.winddirection,
                wind_forward_mps=None, wind_east_mps=None, air_forward_mps=None,
                air_up_mps=None, airspeed_mps=None, gamma_deg=None, alpha_deg=None, q_pa=None,
                cl=None, cd=None, lift_n=None, drag_n=None, wing_forward_n=None, wing_up_n=None,
                air_density_kg_m3=environment.air_density, wing_area_m2=aircraft.wing_area_m2,
-               wing_incidence_deg=aircraft.wing_incidence_deg,
+               wing_incidence_deg=aircraft.wing_incidence_deg, aero_reference_area_m2=area,
                aero_source=SIMPLIFIED_TRANSITION_LABEL if polar is None else polar.source,
                aero_user_source=None if polar is None else polar.user_source, aero_validation='UNVALIDATED',
-               aero_status='UNAVAILABLE', aero_reason='',
-               xv15_wing_pylon_drag_source=XV15_WING_PYLON_DRAG_SOURCE,
-               xv15_wing_pylon_drag_status=XV15_WING_PYLON_DRAG_STATUS)
+               aero_status='UNAVAILABLE', aero_reason='')
+    if nasa:
+        flap, flaperon = polar.flap_pair
+        row.update(beta_m_deg=None, mach=None, flap_deg=flap, flaperon_deg=flaperon,
+                   wing_pylon_lookup_status='UNAVAILABLE')
     for label, value, minimum in (
         ('Wind speed', environment.windspeed, 0),
         ('Wind FROM direction', environment.winddirection, None),
@@ -1178,7 +1261,6 @@ def transition_wing_forces(state, aircraft, environment, polar):
     if polar is None:
         cl, cd = SIMPLIFIED_TRANSITION_CL, SIMPLIFIED_TRANSITION_CD
         row.update(cl=cl, cd=cd)
-        area = row['wing_area_m2']
         for label, value, valid in (
             ('Air density', row['q_pa'], row['q_pa'] is not None),
             ('Wing reference area', area, area is not None and area > 0),
@@ -1198,19 +1280,42 @@ def transition_wing_forces(state, aircraft, environment, polar):
         return row
     gamma = math.atan2(up, forward)
     row['gamma_deg'] = math.degrees(gamma)
-    incidence = aircraft.wing_incidence_deg
-    if incidence is None or not math.isfinite(incidence):
-        row['aero_reason'] = 'Wing incidence unavailable'
-        return row
-    alpha = incidence - row['gamma_deg']
-    row['alpha_deg'] = alpha
-    coefficients = polar.coefficients(alpha)
-    if coefficients is None:
-        row['aero_reason'] = f'AoA outside table range [{polar.rows[0][0]}, {polar.rows[-1][0]}] deg'
-        return row
+    if nasa:
+        # Report A-70 reduces to fuselage AoA with rotor flowfield effects omitted.
+        alpha = -row['gamma_deg']
+        row['alpha_deg'] = alpha
+        temperature = environment.temperature
+        if temperature is None or not math.isfinite(temperature) or temperature <= -273.15:
+            row['aero_reason'] = 'A finite air temperature above absolute zero is required for Mach'
+            return row
+        mach = speed / math.sqrt(1.4 * 287.05 * (temperature + 273.15))
+        row['mach'] = mach
+        left, right = state.left_nacelle_angle_deg, state.right_nacelle_angle_deg
+        if left is None or left != right or not 0 <= left <= 90:
+            row['aero_reason'] = 'NASA wing-pylon lookup requires a common nacelle angle in [0, 90] deg'
+            return row
+        beta = 90 - left
+        row['beta_m_deg'] = beta
+        selected, reason = polar.evaluate(alpha, beta, mach)
+        if selected is None:
+            row['aero_reason'] = reason
+            return row
+        coefficients, lookup_status, row['aero_source'] = selected
+        row['wing_pylon_lookup_status'] = lookup_status
+        row['aero_status'] = lookup_status + ' / FREESTREAM ESTIMATE'
+    else:
+        incidence = aircraft.wing_incidence_deg
+        if incidence is None or not math.isfinite(incidence):
+            row['aero_reason'] = 'Wing incidence unavailable'
+            return row
+        alpha = incidence - row['gamma_deg']
+        row['alpha_deg'] = alpha
+        coefficients = polar.coefficients(alpha)
+        if coefficients is None:
+            row['aero_reason'] = f'AoA outside table range [{polar.rows[0][0]}, {polar.rows[-1][0]}] deg'
+            return row
+        row['aero_status'] = polar.status
     row['cl'], row['cd'] = coefficients
-    row['aero_status'] = polar.status
-    area = row['wing_area_m2']
     if row['q_pa'] is None or area is None or not math.isfinite(area) or area <= 0:
         row.update(aero_status='UNAVAILABLE', aero_reason='Air density or wing reference area unavailable or invalid')
         return row
@@ -1321,7 +1426,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
     return result
 
 
-def report_transition_equations(simplified=False):
+def report_transition_equations(simplified=False, nasa=False):
     print('Assumptions: level, facing north; forward/up positive; east wind excluded from the 2D flow.')
     print('Nacelles: independent linear ramps over requested duration, 0 deg forward / 90 deg up.')
     print('Rotor magnitudes held at Phase 1 values with original calibration status. Prototype T = CT rho A (Omega R)^2.')
@@ -1330,8 +1435,12 @@ def report_transition_equations(simplified=False):
     if simplified:
         print('Constant CL and CD; wing forward = -D; wing up = L.')
     else:
-        print('gamma = atan2(V_air_up, V_air_forward); wing AoA = incidence - gamma.')
-        print('CL/CD interpolated within the supplied table.')
+        print('gamma = atan2(V_air_up, V_air_forward).')
+        if nasa:
+            print('NASA freestream lookup: alpha_W = -gamma, beta_m = 90 deg - nacelle angle.')
+            print('S = 181 ft²; CL/CD use matched report conditions and in-range interpolation.')
+        else:
+            print('Wing AoA = incidence - gamma; CL/CD interpolated within the supplied table.')
         print('Wing forward = -L*sin(gamma) - D*cos(gamma); wing up = L*cos(gamma) - D*sin(gamma).')
     print('Each rotor forward = T*cos(nacelle); up = T*sin(nacelle).')
     print('Net forward = rotor forward + wing forward; net up = rotor up + wing up - mass*g.')
@@ -1340,15 +1449,13 @@ def report_transition_equations(simplified=False):
 
 AIRCRAFT_TRANSITION_BLOCKER = (
     'Missing installed per-rotor thrust and shaft-power maps across nacelle angle, inflow/airspeed, '
-    'RPM or tip Mach, density and blade collective, plus wing/pylon forces across angle of attack, '
-    'nacelle angle and flap/flaperon settings, with rotor-wake effects.'
+    'RPM or tip Mach, density and blade collective, plus rotor-wake effects on wing-pylon forces.'
 )
 
 
 def report_timed_transition(result, audit_path=None):
     print('\nPHASE 2 — TIMED TRANSITION')
     print('XV-15 aircraft transition: UNAVAILABLE.')
-    print(f'{XV15_WING_PYLON_DRAG_SOURCE}: {XV15_WING_PYLON_DRAG_STATUS}')
     simplified = result['simplified']
     if simplified:
         print(SIMPLIFIED_TRANSITION_LABEL)
@@ -1422,13 +1529,21 @@ def report_transition_checkpoints(rows):
         ('Net up (N)', field('net_up_n')),
         ('a up (m/s²)', field('vertical_acceleration_mps2')),
     ))
-    table('WING DRAG CHECKPOINTS', (
+    nasa = 'wing_pylon_lookup_status' in rows[0]
+    lookup_columns = (
         ('t (s)', field('phase2_time_s')),
         ('Tilt L/R (deg)' if asymmetric else 'Tilt (deg)', angle),
         ('AoA (deg)', field('alpha_deg')),
+    )
+    if nasa:
+        first = rows[0]
+        print(f'NASA flap/flaperon setting: {first["flap_deg"]:g}°/{first["flaperon_deg"]:g}° throughout Phase 2.')
+        lookup_columns += (('Mast (deg)', field('beta_m_deg')), ('Mach', field('mach')))
+    table('WING-PYLON DRAG CHECKPOINTS' if nasa else 'WING DRAG CHECKPOINTS', lookup_columns + (
+        ('CL', field('cl')),
         ('CD', field('cd')),
         ('q (Pa)', field('q_pa')),
-        ('S (m²)', field('wing_area_m2')),
+        ('S (m²)', field('aero_reference_area_m2')),
         ('Drag (N)', field('drag_n')),
     ))
     for source in dict.fromkeys(row['aero_source'] for row in checkpoints):
@@ -1453,7 +1568,8 @@ def write_transition_audit(rows, audit_path):
          'total_rotor_forward_n', 'total_rotor_up_n'),
         ('wind_speed_mps', 'wind_from_deg', 'wind_forward_mps', 'wind_east_mps',
          'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3',
-         'wing_area_m2', 'wing_incidence_deg', 'gamma_deg', 'alpha_deg', 'q_pa',
+         'wing_area_m2', 'wing_incidence_deg', 'gamma_deg', 'alpha_deg',
+         'beta_m_deg', 'flap_deg', 'flaperon_deg', 'mach', 'q_pa', 'aero_reference_area_m2',
          'cl', 'cd', 'lift_n', 'drag_n', 'wing_forward_n', 'wing_up_n'),
         ('net_forward_n', 'net_up_n', 'forward_acceleration_mps2', 'vertical_acceleration_mps2'),
     )
@@ -1727,7 +1843,7 @@ def report_data_status(takeoff, transition, aircraft, polar):
     elif transition['rows'] and transition['rows'][-1]['aero_reason']:
         print(f"Last wing force evaluation: UNAVAILABLE — {transition['rows'][-1]['aero_reason']}")
     inputs = ('design_gross', 'nacelle_angle_deg', 'wing_area_ft2')
-    if polar is not None:
+    if isinstance(polar, TransitionPolar):
         inputs += ('wing_incidence_deg',)
     for name in inputs:
         record = aircraft.diagnostics[name]
@@ -1794,7 +1910,7 @@ def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, en
     print('\nRUN INPUTS')
     print(f'Air-density input: {environment.air_density:g} kg/m³ (supplied for this run; held constant)')
     print(f'Wind: {environment.windspeed:g} m/s FROM {environment.winddirection:g}° clockwise from north')
-    print(f'Temperature: {environment.temperature:g} °C (display only)')
+    print(f'Temperature: {environment.temperature:g} °C')
     print(f'Ground elevation (MSL): {environment.altitude:.2f} m (display only)')
     print(f'Design gross (XML): {format_quantity(aircraft.design_gross, "lb")}')
     print(f'Wing area / incidence (XML): {format_quantity(aircraft.wing_area_m2, "m²")} / '
@@ -1822,7 +1938,12 @@ def main(argv=None):
     parser.add_argument('--transition-duration', type=float, help='Phase 2 duration in seconds')
     parser.add_argument('--transition-end', default='0:0', metavar='LEFT:RIGHT',
                         help='ending nacelle angles in degrees, default 0:0')
-    parser.add_argument('--transition-polar', type=Path, help='wing coefficient CSV with header alpha_deg,cl,cd')
+    wing_model = parser.add_mutually_exclusive_group()
+    wing_model.add_argument('--transition-polar', type=Path, help='wing coefficient CSV with header alpha_deg,cl,cd')
+    wing_model.add_argument('--illustrative-transition', action='store_true',
+                            help='use the legacy constant CL/CD software demonstration')
+    parser.add_argument('--transition-flaps', choices=('0:0', '20:12.5', '40:25', '75:47'),
+                        metavar='FLAP:FLAPERON', help='fixed NASA flap/flaperon pair in degrees (default 40:25)')
     parser.add_argument('--polar-source', help='source metadata for the supplied wing coefficient table')
     parser.add_argument('--transition-audit', type=Path, help='new CSV path; default output/stage2_audit_*.csv')
     parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
@@ -1858,12 +1979,20 @@ def main(argv=None):
             parser.error(f'{flag} must be finite and positive')
     if args.polar_source and args.transition_polar is None:
         parser.error('--polar-source requires --transition-polar')
+    if args.transition_flaps and (args.transition_polar or args.illustrative_transition):
+        parser.error('--transition-flaps applies only to the NASA wing-pylon lookup')
     polar = None
     if args.transition_polar is not None:
         try:
             polar = TransitionPolar.load(args.transition_polar, args.polar_source)
         except (OSError, ValueError, csv.Error) as exc:
             parser.error(f'Invalid transition polar: {exc}')
+    elif not args.illustrative_transition:
+        flap_pair = tuple(map(float, (args.transition_flaps or '40:25').split(':')))
+        try:
+            polar = XV15WingPylonPolar.load(flap_pair)
+        except OSError as exc:
+            parser.error(f'NASA wing-pylon data unavailable: {exc}')
     print('TMPE :: XV-15 HELICOPTER TAKEOFF')
     aircraft = Aircraft()
     state = AircraftState()
@@ -1959,7 +2088,7 @@ def main(argv=None):
         report_transition(sample_nacelle_transition(result, angle_pairs))
     if args.verbose:
         print('\nTRANSITION EQUATIONS')
-        report_transition_equations(simplified=polar is None)
+        report_transition_equations(simplified=polar is None, nasa=isinstance(polar, XV15WingPylonPolar))
     if args.ideal_rated_hover:
         report_rated_ideal_hover(aircraft, environment)
     if args.diagnostics or args.verbose:

@@ -9,82 +9,82 @@ duration prompt, with equivalent CLI flags for scripted runs. The shared
 ```sh
 python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' \
   --rotor-model prototype-fixed-ct --duration 5 --transition-duration 2 \
-  --transition-end 45:30
+  --transition-end 45:45
 ```
 
 The example selects the fixed-CT software-test model. The illustrative
 collective fixture also requires explicit opt-in. Left and right nacelles each
 ramp linearly from their Phase 1 angles to the requested final angles (default
-`0:0`). The range 0–90° is a software input range. The separate
+`0:0`). The range 0–90° is a software input range. Enter a wind FROM bearing
+of 0° for a headwind in this north-facing example. The Phase 1 exit velocity
+and wind can put early Phase 2 steps outside the source tables.
+For a software-only run of the older constant-coefficient demonstration, add
+`--illustrative-transition`.
+
+The separate
 `--nacelle-schedule 90:90 45:45 0:0` option still prints untimed geometric
 samples. Those samples leave the timed schedule and state untouched.
 
-## Wing coefficient input
+## NASA CR-166536 wing-pylon coefficients
 
-Without a CSV, Phase 2 runs the **SIMPLIFIED ILLUSTRATIVE TRANSITION**.
-The dimensionless software-test defaults are CL = 0.50 and CD = 0.08.
-Edit `SIMPLIFIED_TRANSITION_CL` and `SIMPLIFIED_TRANSITION_CD` in the TMPE
-script to change them. Rotor thrust magnitudes carry over from the selected
-Phase 1 model. Dynamic pressure uses the existing planar wind convention.
-The simplified net forces are rotor forward force minus drag and rotor up
-force plus lift minus weight. The console shows checkpoints and the audit CSV records each evaluated timestep.
+Phase 2 defaults to the freestream wing-pylon model. The source file holds
+dimensionless `C_LWP` and `C_DWP` values in separate table columns, each
+with its NASA table, printed page, mast angle, flap/flaperon pair and Mach
+interval or exact Mach. Each column maps `alpha_W` in degrees to the
+transcribed coefficient or `None` for unavailable cells. The 20 supplied
+screenshots cover pp. B-32–B-51. The lift and drag coefficients come from
+Tables 4-I–4-IV, pp. B-34–B-44. The other screenshots cover stability
+derivatives, spinner and wake constants, stabilizer downwash, moments and
+zero-lift slopes. The report describes wind-tunnel-based coefficients up to
+stall and approximations above stall (pp. 26–27).
+[Source data](../MY_physics_engine/data%28v.2%29/xv15_wing_pylon_data.py) ·
+[NASA CR-166536](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf)
 
-To use a tabulated polar, pass `--transition-polar path/to/wing.csv` with
-the header `alpha_deg,cl,cd`.
-Use wing angle of attack in degrees and dimensionless lift and drag
-coefficients based on the XML wing reference area. Provide at least two rows
-with finite values and strictly increasing angles. CD must be nonnegative.
-Both endpoints are usable. Values between rows are linearly interpolated.
-If AoA is undefined or outside the supplied range, the simulation stops
-advancing and reports the condition. The lookup assumes one fixed wing polar
-throughout the conversion.
+- **Mast angle.** TMPE uses 90° for vertical nacelles and 0° for forward.
+  The report's `beta_m` runs in the opposite direction, so
+  `beta_m_deg = 90 - nacelle_deg` (p. A-50). A single symmetric mast angle
+  is required. The report calls for interpolation between the endpoint mast
+  angles (p. 25). TMPE linearly interpolates there only when both endpoint
+  configurations support the query, and labels the result interpolated.
+- **Angle of attack.** The report's freestream equation uses fuselage AoA
+  with a rotor-flowfield correction (p. A-70). TMPE omits that correction
+  and uses fuselage AoA `alpha_W = -gamma` for its level aircraft.
+  Lift and drag are each evaluated at that same angle, using their own
+  adjacent defined rows when interpolation is needed. An unavailable
+  coefficient blocks the force calculation and stops Phase 2 advancement.
+- **Flaps and Mach.** `--transition-flaps FLAP:FLAPERON` holds one setting
+  for the run. The default is `40:25`. The other available settings are
+  `0:0`, `20:12.5`, and `75:47` (p. A-133). The lookup matches the flap pair
+  and uses planar airspeed divided by
+  `sqrt(1.4 * 287.05 * (temperature_C + 273.15))` for Mach. It matches the
+  actual Mach to a printed interval or exact Mach column. It neither
+  interpolates across Mach or flap settings nor extrapolates across AoA.
+- **Reference area.** The report scales freestream loads by
+  `S_WFS = S_W - S_iWL - S_iWR` (p. A-70). With rotor-wake effects excluded,
+  TMPE uses the full GTRS reference area of 181 ft² (16.81545024 m²), as
+  documented by NASA TM-4448 Appendix A. [NASA TM-4448](https://ntrs.nasa.gov/api/citations/19930013297/downloads/19930013297.pdf)
 
-Every supplied table is marked USER-SUPPLIED / UNVALIDATED. The optional
-`--polar-source` text is stored as user-provided metadata, separately from
-validation status. The program does not infer CL or CD from curve descriptions.
+### Alternate coefficient inputs
 
-## NASA CR-166536 wing-pylon drag availability
-
-The source-backed model is **unavailable**. Appendix A p. A-47 identifies
-Tables 4-III and 4-IV as the numerical sources for dimensionless wing-pylon
-`C_DWP` as a function of `alpha_W`, `beta_m`, `delta_F`, and `M_N`. The
-accessible report text did not provide reliably extractable numerical rows
-from either table. Phase 2 uses the existing illustrative constants or the
-user-supplied AoA-only CSV. Its console and audit distinguish those
-coefficients from the unavailable NASA model. [NASA CR-166536](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf)
-
-- **Mast angle.** Appendix A p. A-50 defines `beta_m` as 0° in helicopter
-  mode and 90° in airplane mode. Figure 11 uses `i_N`, with the same endpoint
-  convention as TMPE. For the report's mast-angle input,
-  `beta_m_deg = 90 - nacelle_deg`.
-- **AoA and area.** Appendix A p. A-70 computes freestream wing-pylon AoA
-  from fuselage AoA with a rotor-flowfield correction. With that correction
-  omitted, the equation uses fuselage AoA, so TMPE's current incidence-adjusted
-  wing AoA cannot be reused as the report input without mapping its datum.
-  The report uses `D_WP = q_WFS * S_WFS * C_DWPFS` with
-  `S_WFS = S_W - S_iWL - S_iWR`. With wake effects excluded, the formula
-  reduces to full wing area. Verify the report's XV-15 `S_W` value against
-  TMPE's 169 ft² before loading coefficients.
-- **Flap and Mach.** The report defines `delta_F` as a flap-position
-  indicator and `M_N` as dimensionless Mach (p. A-50). The selector lists
-  flap/flaperon pairs 0°/0°, 20°/12.5°, 40°/25°, and 75°/47° (p. A-133).
-  The exact table breakpoints and which combinations have data still need
-  confirmation. The report describes wind-tunnel-based values up to stall
-  and approximations above stall (pp. 26–27).
-- **Data required.** Obtain readable Tables 4-III and 4-IV, with headings,
-  notes, and matched CD and condition rows. Check Tables 4-I and 4-II for
-  matching CL. Figure 11 is a visual trend check. A plot of source and
-  interpolated curves requires the numerical rows.
+Select `--illustrative-transition` for the software-test constants CL = 0.50
+and CD = 0.08, with lift applied upward and drag backward. Select
+`--transition-polar path/to/wing.csv` for a fixed wing polar with the header
+`alpha_deg,cl,cd`. A CSV needs at least two finite rows with strictly
+increasing AoA in degrees and nonnegative CD. Its dimensionless coefficients
+use the XML wing area and incidence-adjusted AoA. TMPE labels supplied tables
+USER-SUPPLIED / UNVALIDATED and records any `--polar-source` attribution.
+These two alternate inputs are mutually exclusive. The flap setting flag
+applies to the NASA model.
 
 ## Data availability
 
 | Input or result | Basis or blocker |
 | --- | --- |
 | Design gross mass, weight, wing geometry, nacelle setting | Existing XML. The program converts gross weight in pounds to mass in kg and calculates weight using standard gravity. [NASA TM-81244](https://ntrs.nasa.gov/api/citations/19810001546/downloads/19810001546.pdf) documents the design gross weight and nacelle convention. |
-| Wing CL/CD | Software-test constants by default, or user-supplied CSV values. The configuration-dependent wing/pylon tables need their flow-angle, control-setting, reference-area and nacelle-angle definitions mapped before use. [NASA CR-166536](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf) · [Repository data-gap report](../TMPE_AERODYNAMIC_DATA_GAPS_REPORT.md) |
+| Wing-pylon CL/CD | NASA CR-166536 Appendix B Tables 4-I–4-IV supply the default coefficients. The lookup requires compatible AoA, mast angle, flap setting and Mach coverage for both coefficients. |
 | Actual rotor thrust, power and collective calibration | The shipped collective calibration lacks matched pitch/thrust data and reference conditions. Design RPM, diameter and engine rating do not establish mast power or a takeoff/conversion thrust law. [NASA TM-86833](https://ntrs.nasa.gov/citations/19860005773) is a full-scale hover-test data lead with a different scope from conversion. |
 | Additional loads and attitude | Rotor/wing interference, other airframe loads, and attitude response are outside the implemented force model. |
-| Air density, temperature and elevation | The entered density is held constant and used for dynamic pressure and prototype rotor thrust. Temperature and ground elevation MSL are displayed as context. There is no atmosphere calculation. |
+| Air density, temperature and elevation | The entered density is held constant and used for dynamic pressure and prototype rotor thrust. The NASA lookup also holds the entered temperature constant to compute Mach. Ground elevation MSL is displayed as context. |
 
 
 ## Axes and force equations
@@ -97,9 +97,10 @@ entered wind is horizontal.
 
 Subtract wind from ground velocity to get planar air-relative velocity
 `(u, w)`. Airspeed is `hypot(u,w)`. Flight-path angle `gamma = atan2(w,u)`
-is positive when the air-relative velocity points upward. Wing AoA is
-`incidence - gamma`, with incidence positive for leading-edge-up mounting.
-Wing area converts from ft² to m² using 0.09290304 m²/ft².
+is positive when the air-relative velocity points upward. The NASA lookup uses
+`alpha_W = -gamma`. The user-supplied CSV uses `incidence - gamma`, with
+incidence positive for leading-edge-up mounting. Both area inputs convert
+from ft² to m² using 0.09290304 m²/ft².
 
 ```text
 q = 0.5 rho V²
@@ -126,18 +127,20 @@ performance map or establish a validated transition trajectory.
 
 ## Audit
 
-The console shows both stage times, the full simplified time history, or up to
-five checkpoints for the supplied-polar path. Use `--verbose` to print the equations. When
+The console shows both stage times and transition checkpoints. Use
+`--verbose` to print the equations. When
 Phase 2 advances no time, the final state is explicitly attributed to Phase 1.
 All evaluated rows are saved to a unique `output/stage2_audit_*.csv`
 in the working directory. Use `--transition-audit` to choose a new file path.
 The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
-and aerodynamic provenance. Blank numerical cells represent unavailable
+and aerodynamic provenance. NASA lookup rows include AoA, report mast angle,
+Mach, flap/flaperon setting, reference area, and source and interpolation
+status. Blank numerical cells represent unavailable
 quantities. A preflight block before any step is reported on the console.
 
 ## Primary-source review
 
-Both demonstration paths hold Phase 1 thrust and label their trajectories
+All coefficient paths hold Phase 1 thrust and label their trajectories
 as illustrative in the console and CSV. Flight validation requires independent
 measured XV-15 transition data.
 
@@ -148,7 +151,6 @@ measured XV-15 transition data.
 | [NASA TM-81177](https://ntrs.nasa.gov/citations/19800015802), notation, Fig. 13, Table II and tunnel scale-data printout | Full-aircraft tunnel runs in helicopter, conversion and airplane configurations. Test configurations include changes to pylon and wing hardware. | TMPE has no ingested run map matching rotor-on/off configuration, flap/flaperon settings, tilt, airspeed, thrust and shaft power. Total tunnel loads require a consistent decomposition before use alongside separate rotor forces. |
 | [NASA CR-176970](https://ntrs.nasa.gov/citations/19860020297), Chapter 2, Tables 1 and 5, and Chapter 5 | Configuration-specific hover download estimates combining out-of-ground-effect hover data and representative wing tunnel data. Table 5 gives download relative to total aircraft thrust at a selected power setting across flap settings. | These hover results do not define wake download across nacelle angle and forward speed. No fixed hover download fraction was applied to takeoff or conversion. |
 
-No NASA test coefficients were added or converted into live model inputs.
 The existing fixed-CT demonstration uses the illustrative `CT=0.0102`
 from `rotor.xml`, a 25 ft diameter and the XML design hover setting of
 565 rev/min. At an entered density of 1.225 kg/m³, the diameter converts to
