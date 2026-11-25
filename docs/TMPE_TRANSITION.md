@@ -9,7 +9,7 @@ duration prompt, with equivalent CLI flags for scripted runs. The shared
 ```sh
 python3 'MY_physics_engine/tiltrotor_modeling_physics_engine(TMPE).py' \
   --rotor-model prototype-fixed-ct --duration 5 --transition-duration 2 \
-  --transition-end 45:45
+  --transition-end 45:45 --transition-pitch-deg 0
 ```
 
 The example selects the fixed-CT software-test model. The illustrative
@@ -17,7 +17,10 @@ collective fixture also requires explicit opt-in. Left and right nacelles each
 ramp linearly from their Phase 1 angles to the requested final angles (default
 `0:0`). The range 0–90° is a software input range. Enter a wind FROM bearing
 of 0° for a headwind in this north-facing example. The Phase 1 exit velocity
-and wind can put early Phase 2 steps outside the source tables.
+and wind determine the early Phase 2 flow. `--transition-pitch-deg` holds an
+explicit nose-up-positive body pitch for the AoA calculation. With the
+bundled rotor model the NASA path reports the first evaluated flow and the
+missing rotor inputs before it can advance.
 For a software-only run of the older constant-coefficient demonstration, add
 `--illustrative-transition`.
 
@@ -51,12 +54,25 @@ stall and approximations above stall (pp. 26–27).
   supply both CL and CD at the requested AoA, flap setting and Mach, and
   lie within 5° by default. Pass a value such as
   `--transition-mast-endpoint-fallback 3` to change the maximum gap in degrees.
-- **Angle of attack.** The report's freestream equation uses fuselage AoA
-  with a rotor-flowfield correction (p. A-70). TMPE omits that correction
-  and uses fuselage AoA `alpha_W = -gamma` for its level aircraft.
-  Lift and drag are each evaluated at that same angle, using their own
-  adjacent defined rows when interpolation is needed. If the lookup cannot
-  supply both coefficients, the force calculation and Phase 2 advancement stop.
+- **Angle of attack.** TMPE calculates fuselage AoA as `alpha_F = pitch - gamma`.
+  With no pitch input, fuselage AoA is unavailable on the NASA path. The
+  freestream wing AoA subtracts the rotor-flow correction of NASA CR-166536
+  p. 25, Eq. 57.3, directly from fuselage AoA. The correction in radians is
+  `K_XRW * x_R/W * (C_RFR + C_RFL) / max(mu, 0.15)^2`.
+  TMPE uses the left/right mean advance ratio and
+  `x_R/W = X_RW0 + beta_m * (X_RW1 + beta_m * X_RW2)` from p. A-70,
+  with mast angle in degrees and the constants from p. B-33. The correction
+  is converted to degrees for the lookup. This angle definition has no
+  separate wing-incidence term.
+- **Rotor-flow inputs.** Each `C_RF` is the resultant mast-axis rotor force
+  divided by `rho * pi * effective_speed^2 * R^4` (pp. A-34–A-38). Each
+  advance ratio uses air-relative hub speed in the mast plane divided by
+  effective tip speed (pp. A-18–A-20). The prototype's axial thrust and
+  design RPM do not supply these operating-state quantities. Python callers
+  can pass `rotor_flow_provider(state, environment)` to `simulate_transition()`
+  to return a sourced `XV15RotorFlow` for each step. If a required AoA input
+  is missing, TMPE reports any available fuselage AoA, leaves the NASA wing
+  angle, coefficients and loads blank, and stops Phase 2 at that step.
 - **Flaps and Mach.** `--transition-flaps FLAP:FLAPERON` holds one setting
   for the run. The default is `40:25`. The other available settings are
   `0:0`, `20:12.5`, and `75:47` (p. A-133). The lookup matches the flap pair
@@ -65,8 +81,8 @@ stall and approximations above stall (pp. 26–27).
   actual Mach to a printed interval or exact Mach column. It neither
   interpolates across Mach or flap settings nor extrapolates across AoA.
 - **Reference area.** The report scales freestream loads by
-  `S_WFS = S_W - S_iWL - S_iWR` (p. A-70). With rotor-wake effects excluded,
-  TMPE uses the full GTRS reference area of 181 ft² (16.81545024 m²), as
+  `S_WFS = S_W - S_iWL - S_iWR` (p. A-70). TMPE corrects the freestream
+  angle and uses the full GTRS reference area of 181 ft² (16.81545024 m²), as
   documented by NASA TM-4448 Appendix A. [NASA TM-4448](https://ntrs.nasa.gov/api/citations/19930013297/downloads/19930013297.pdf)
 
 ### Alternate coefficient inputs
@@ -76,7 +92,10 @@ and CD = 0.08, with lift applied upward and drag backward. Select
 `--transition-polar path/to/wing.csv` for a fixed wing polar with the header
 `alpha_deg,cl,cd`. A CSV needs at least two finite rows with strictly
 increasing AoA in degrees and nonnegative CD. Its dimensionless coefficients
-use the XML wing area and incidence-adjusted AoA. TMPE labels supplied tables
+use the XML wing area and a geometric AoA approximation with wing incidence.
+With prescribed pitch the approximation uses `pitch + incidence - gamma`.
+Without pitch, this user-polar path labels its level-attitude assumption.
+TMPE labels supplied tables
 USER-SUPPLIED / UNVALIDATED and records any `--polar-source` attribution.
 These two alternate inputs are mutually exclusive. The flap setting flag
 applies to the NASA model.
@@ -88,13 +107,13 @@ applies to the NASA model.
 | Design gross mass, weight, wing geometry, nacelle setting | Existing XML. The program converts gross weight in pounds to mass in kg and calculates weight using standard gravity. [NASA TM-81244](https://ntrs.nasa.gov/api/citations/19810001546/downloads/19810001546.pdf) documents the design gross weight and nacelle convention. |
 | Wing-pylon CL/CD | NASA CR-166536 Appendix B Tables 4-I–4-IV supply the default coefficients. The lookup requires compatible AoA, mast angle, flap setting and Mach coverage for both coefficients. |
 | Actual rotor thrust, power and collective calibration | The shipped collective calibration lacks matched pitch/thrust data and reference conditions. Design RPM, diameter and engine rating do not establish mast power or a takeoff/conversion thrust law. [NASA TM-86833](https://ntrs.nasa.gov/citations/19860005773) is a full-scale hover-test data lead with a different scope from conversion. |
-| Additional loads and attitude | Rotor/wing interference, other airframe loads, and attitude response are outside the implemented force model. |
+| Additional loads and attitude | Pitch is prescribed for AoA. Attitude dynamics, wake-immersed wing loads, and other airframe loads are outside the modeled force balance. |
 | Air density, temperature and elevation | The entered density is held constant and used for dynamic pressure and prototype rotor thrust. The NASA lookup also holds the entered temperature constant to compute Mach. Ground elevation MSL is displayed as context. |
 
 
 ## Axes and force equations
 
-The aircraft stays level and faces north. Forward and up are positive. The
+The inertial plane faces north. Forward, up, and nose-up pitch are positive. The
 wind-FROM bearing is clockwise from north. Wind blowing toward the north is
 `-wind_speed * cos(bearing)`. The east component is logged and excluded from
 the planar force calculation. The up component of wind is zero because the
@@ -102,9 +121,9 @@ entered wind is horizontal.
 
 Subtract wind from ground velocity to get planar air-relative velocity
 `(u, w)`. Airspeed is `hypot(u,w)`. Flight-path angle `gamma = atan2(w,u)`
-is positive when the air-relative velocity points upward. The NASA lookup uses
-`alpha_W = -gamma`. The user-supplied CSV uses `incidence - gamma`, with
-incidence positive for leading-edge-up mounting. Both area inputs convert
+is positive when the air-relative velocity points upward. The NASA lookup
+uses rotor-corrected wing AoA. The CSV path uses geometric AoA with positive
+incidence for leading-edge-up mounting. Both area inputs convert
 from ft² to m² using 0.09290304 m²/ft².
 
 ```text
@@ -122,11 +141,11 @@ position_next = position + velocity dt + 0.5 a dt²
 velocity_next = velocity + a dt
 ```
 
-At each step, the model reprojects the two retained Phase 1 thrust magnitudes
+At each step, the model uses the original planar projection of the retained Phase 1 thrust
 and recalculates the wing loads from the current air-relative state. It applies
 constant acceleration during that step and stops at first ground contact.
-Rotor inflow, RPM response, power limits, ground effect, rotor/wing
-interference, other airframe loads, lateral motion and attitude dynamics are
+Rotor inflow, RPM response, power limits, ground effect, wake-immersed wing
+loads, other airframe loads, lateral motion and attitude dynamics are
 excluded. A calibrated Phase 1 input does not supply a rotor conversion
 performance map or establish a validated transition trajectory.
 
@@ -138,9 +157,11 @@ Phase 2 advances no time, the final state is explicitly attributed to Phase 1.
 All evaluated rows are saved to a unique `output/stage2_audit_*.csv`
 in the working directory. Use `--transition-audit` to choose a new file path.
 The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
-and aerodynamic provenance. NASA lookup rows include AoA, requested report
-mast angle, Mach, flap/flaperon setting, reference area, source and lookup
-status. When a single mast table is used, the CSV also records its angle and
+and aerodynamic provenance. It shows air-relative velocity, flight-path
+angle, pitch, and fuselage AoA. NASA rows also show the rotor-flow inputs
+and correction, corrected wing AoA, any missing inputs, requested report mast,
+Mach, flap/flaperon setting, reference area, source and lookup status.
+When a single mast table is used, the CSV also records its angle and
 the angular gap. Blank numerical cells represent unavailable
 quantities. A preflight block before any step is reported on the console.
 

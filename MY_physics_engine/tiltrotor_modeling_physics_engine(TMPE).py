@@ -1044,10 +1044,10 @@ def simulate_takeoff(aircraft, environment, duration_s=5.0, timestep_s=.1, force
 
 @dataclass(frozen=True)
 class TransitionState:
-    """Level-plane handoff in SI: x forward, altitude/vertical velocity up positive.
+    """Inertial plane in SI: x forward, altitude/vertical velocity up positive.
 
-    Phase 1 has no horizontal motion. Phase 2A never advances this state.
-    Angles are nacelle tilt, independent of blade collective pitch.
+    Phase 1 has no horizontal motion. Phase 2 pitch is prescribed for the
+    AoA calculation, with nose-up positive. Nacelle tilt is a separate input.
     """
     height_agl_m: float
     vertical_velocity_mps: float
@@ -1058,6 +1058,7 @@ class TransitionState:
     right_nacelle_angle_deg: float | None
     forward_velocity_mps: float = 0.0
     forward_distance_m: float = 0.0
+    pitch_attitude_deg: float | None = None
 
 
 def initialize_transition(takeoff_result):
@@ -1138,6 +1139,22 @@ SIMPLIFIED_TRANSITION_CD = 0.08
 
 
 @dataclass(frozen=True)
+class XV15RotorFlow:
+    """Source-backed per-step rotor inputs in the CR-166536 definitions.
+
+    C_RF uses the total mast-axis force magnitude and effective rotor speed
+    (p. A-38). Mu uses rotor-hub speed in the mast plane divided by effective
+    tip speed (pp. A-18–A-20). The source identifies the data or model used.
+    """
+
+    source: str
+    left_force_coefficient: float | None = None
+    right_force_coefficient: float | None = None
+    left_advance_ratio: float | None = None
+    right_advance_ratio: float | None = None
+
+
+@dataclass(frozen=True)
 class XV15WingPylonPolar:
     """NASA report inputs for one fixed flap/flaperon setting."""
 
@@ -1145,10 +1162,13 @@ class XV15WingPylonPolar:
     lift_tables: tuple
     drag_tables: tuple
     mast_endpoint_max_gap_deg: float | None = None
+    rotor_wing_induction: tuple | None = None
 
     source = 'NASA CR-166536 Appendix B'
     status = 'NASA REPORT DATA / FREESTREAM ESTIMATE'
     user_source = None
+    wing_alpha_source = 'NASA CR-166536 p. 25 Eq. 57.3 and Appendix A pp. A-49–A-55, A-70'
+    induction_source = 'NASA CR-166536 Appendix B p. B-33'
     # GTRS area documented in NASA TM-4448, Appendix A, citing CR-166536.
     reference_area_m2 = 181.0 * 0.09290304
 
@@ -1161,7 +1181,60 @@ class XV15WingPylonPolar:
         data = runpy.run_path(str(DATA_DIR / 'xv15_wing_pylon_data.py'))
         lift, drag = (tuple(block for block in data[name] if block[3] == flap_pair)
                       for name in ('LIFT_TABLES', 'DRAG_TABLES'))
-        return cls(flap_pair, lift, drag, mast_endpoint_max_gap_deg)
+        return cls(flap_pair, lift, drag, mast_endpoint_max_gap_deg, data.get('ROTOR_WING_INDUCTION'))
+
+    def rotor_flow_correction(self, beta_deg, rotor_flow):
+        """Return the Eq. 57.3 correction in degrees, with its input audit."""
+        rotor_flow = rotor_flow if rotor_flow is not None else XV15RotorFlow('')
+        source = rotor_flow.source.strip() if isinstance(rotor_flow.source, str) else ''
+        inputs = {}
+        missing = []
+        for key, value, label in (
+            ('c_rf_left', rotor_flow.left_force_coefficient, 'left rotor force coefficient C_RFL'),
+            ('c_rf_right', rotor_flow.right_force_coefficient, 'right rotor force coefficient C_RFR'),
+            ('mu_left', rotor_flow.left_advance_ratio, 'left mast-plane advance ratio mu_L'),
+            ('mu_right', rotor_flow.right_advance_ratio, 'right mast-plane advance ratio mu_R'),
+        ):
+            try:
+                if isinstance(value, bool):
+                    raise ValueError(f'{label} must be numeric')
+                require_finite(label, value, 0)
+            except (OverflowError, TypeError, ValueError):
+                missing.append(label)
+                value = None
+            inputs[key] = value
+        if any(value is not None for value in inputs.values()) and not source:
+            missing.append('source for the supplied rotor coefficients and advance ratios')
+        inputs.update(rotor_flow_source=source, rotor_flow_status='UNAVAILABLE' if missing else 'SOURCE-BACKED',
+                      rotor_wing_induction=None, rotor_wing_induction_status='UNAVAILABLE',
+                      rotor_wing_induction_source='', rotor_advance_ratio_mean=None)
+
+        if self.rotor_wing_induction is None:
+            missing.append('rotor-to-wing constants K_XRW, X_RW0, X_RW1 and X_RW2')
+        else:
+            k_xrw, x_rw0, x_rw1, x_rw2 = self.rotor_wing_induction
+            inputs['rotor_wing_induction_source'] = self.induction_source
+            if beta_deg is not None:
+                inputs.update(rotor_wing_induction=x_rw0 + beta_deg * (x_rw1 + beta_deg * x_rw2),
+                              rotor_wing_induction_status='CALCULATED FROM SOURCE-BACKED CONSTANTS')
+        if beta_deg is None:
+            missing.append('common left/right nacelle angle in [0, 90] deg for NASA mast angle beta_m')
+        if missing:
+            return None, inputs, missing
+
+        # A-70 supplies the mast polynomial and per-rotor mean. The squared
+        # denominator follows p. 25 Eq. 57.3. A-55 gives the resulting angle
+        # in radians, while the polar tables and Phase 2 audit use degrees.
+        mu = 0.5 * inputs['mu_left'] + 0.5 * inputs['mu_right']
+        inputs['rotor_advance_ratio_mean'] = mu
+        mu_floor = max(mu, 0.15)
+        rotor_force_coefficient_sum = inputs['c_rf_right'] + inputs['c_rf_left']
+        correction_rad = (k_xrw * inputs['rotor_wing_induction']
+                          * rotor_force_coefficient_sum / (mu_floor * mu_floor))
+        correction_deg = math.degrees(correction_rad)
+        if not math.isfinite(correction_deg):
+            return None, inputs, ['finite Eq. 57.3 rotor-flow correction']
+        return correction_deg, inputs, missing
 
     @staticmethod
     def sample(tables, alpha, beta, mach):
@@ -1242,19 +1315,27 @@ class XV15WingPylonPolar:
         return (coefficients, status, self.source + ' — ' + '; '.join(sources), table_mast), ''
 
 
-def transition_wing_forces(state, aircraft, environment, polar):
-    """North-facing level x/up plane. Lift points toward up at gamma = 0.
+def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=None):
+    """North-facing inertial x/up plane. Lift points toward up at gamma = 0.
 
-    V_air = V_ground - V_wind in the plane. Gamma = atan2(up, forward).
-    The NASA lookup uses alpha = -gamma. The user CSV uses incidence - gamma.
-    L acts along (-sin gamma, cos gamma)
-    and D along (-cos gamma, -sin gamma). East wind is outside this model.
+    V_air = V_ground - V_wind. Gamma = atan2(up, forward). With nose-up
+    attitude positive, fuselage AoA is pitch minus gamma. The NASA lookup
+    requires the rotor-corrected wing AoA. East wind is outside this model.
     """
     nasa = isinstance(polar, XV15WingPylonPolar)
     area = polar.reference_area_m2 if nasa else aircraft.wing_area_m2
+    pitch = state.pitch_attitude_deg
+    if isinstance(pitch, bool) or not isinstance(pitch, (int, float)) or not math.isfinite(pitch):
+        pitch = None
     row = dict(wind_speed_mps=environment.windspeed, wind_from_deg=environment.winddirection,
                wind_forward_mps=None, wind_east_mps=None, air_forward_mps=None,
-               air_up_mps=None, airspeed_mps=None, gamma_deg=None, alpha_deg=None, q_pa=None,
+               air_up_mps=None, airspeed_mps=None, air_relative_velocity_status='UNAVAILABLE',
+               gamma_deg=None, gamma_status='UNAVAILABLE', pitch_attitude_deg=pitch,
+               pitch_attitude_status='UNAVAILABLE' if pitch is None else 'USER-PRESCRIBED',
+               pitch_attitude_source='' if pitch is None else 'Phase 2 pitch input',
+               fuselage_alpha_deg=None, fuselage_alpha_status='UNAVAILABLE',
+               wing_alpha_deg=None, wing_alpha_status='UNAVAILABLE', wing_alpha_source='',
+               alpha_deg=None, q_pa=None,
                cl=None, cd=None, lift_n=None, drag_n=None, wing_forward_n=None, wing_up_n=None,
                air_density_kg_m3=environment.air_density, wing_area_m2=aircraft.wing_area_m2,
                wing_incidence_deg=aircraft.wing_incidence_deg, aero_reference_area_m2=area,
@@ -1265,6 +1346,8 @@ def transition_wing_forces(state, aircraft, environment, polar):
         flap, flaperon = polar.flap_pair
         row.update(beta_m_deg=None, table_mast_deg=None, mast_angle_gap_deg=None,
                    mach=None, flap_deg=flap, flaperon_deg=flaperon,
+                   rotor_flow_correction_deg=None, rotor_flow_correction_status='UNAVAILABLE',
+                   wing_alpha_source=polar.wing_alpha_source, wing_alpha_missing_inputs='',
                    wing_pylon_lookup_status='UNAVAILABLE')
     for label, value, minimum in (
         ('Wind speed', environment.windspeed, 0),
@@ -1276,13 +1359,21 @@ def transition_wing_forces(state, aircraft, environment, polar):
             require_finite(label, value, minimum)
         except (TypeError, ValueError):
             row['aero_reason'] = f'{label} is missing or invalid'
+            if nasa:
+                row['wing_alpha_missing_inputs'] = label
             return row
     wind_forward, wind_east, _ = wind_velocity_ned(environment.windspeed, environment.winddirection)
     forward = state.forward_velocity_mps - wind_forward
     up = state.vertical_velocity_mps
     speed = math.hypot(forward, up)
     row.update(wind_forward_mps=wind_forward, wind_east_mps=wind_east, air_forward_mps=forward,
-               air_up_mps=up, airspeed_mps=speed)
+               air_up_mps=up, airspeed_mps=speed, air_relative_velocity_status='CALCULATED')
+    if speed > FLOW_EPS_MPS:
+        gamma_deg = math.degrees(math.atan2(up, forward))
+        row.update(gamma_deg=gamma_deg, gamma_status='CALCULATED')
+        if pitch is not None:
+            row.update(fuselage_alpha_deg=pitch - gamma_deg,
+                       fuselage_alpha_status='CALCULATED FROM USER-PRESCRIBED PITCH')
     density = environment.air_density
     if density is not None and math.isfinite(density) and density >= 0:
         row['q_pa'] = .5 * density * speed**2
@@ -1303,28 +1394,36 @@ def transition_wing_forces(state, aircraft, environment, polar):
         row.update(lift_n=lift, drag_n=drag, wing_forward_n=-drag, wing_up_n=lift,
                    aero_status='ILLUSTRATIVE / SOFTWARE-TEST ASSUMPTIONS')
         return row
-    if speed <= FLOW_EPS_MPS:
-        row['aero_reason'] = 'Flight-path angle and AoA undefined at insufficient planar airspeed'
-        return row
-    gamma = math.atan2(up, forward)
-    row['gamma_deg'] = math.degrees(gamma)
     if nasa:
-        # Report A-70 reduces to fuselage AoA with rotor flowfield effects omitted.
-        alpha = -row['gamma_deg']
-        row['alpha_deg'] = alpha
         temperature = environment.temperature
-        if temperature is None or not math.isfinite(temperature) or temperature <= -273.15:
+        if temperature is not None and math.isfinite(temperature) and temperature > -273.15:
+            row['mach'] = speed / math.sqrt(1.4 * 287.05 * (temperature + 273.15))
+        left, right = state.left_nacelle_angle_deg, state.right_nacelle_angle_deg
+        beta = 90 - left if left is not None and left == right and 0 <= left <= 90 else None
+        row['beta_m_deg'] = beta
+        correction, rotor_audit, missing = polar.rotor_flow_correction(beta, rotor_flow)
+        row.update(rotor_audit)
+        if correction is not None:
+            row.update(rotor_flow_correction_deg=correction,
+                       rotor_flow_correction_status='CALCULATED FROM SOURCE-BACKED INPUTS')
+        if row['gamma_deg'] is None:
+            missing.append('sufficient planar airspeed for flight-path angle gamma')
+        if pitch is None:
+            missing.append('user-prescribed Phase 2 pitch attitude')
+        if missing:
+            row['wing_alpha_missing_inputs'] = ', '.join(missing)
+            row['aero_reason'] = 'NASA-corrected wing AoA unavailable. Missing or invalid: ' + row['wing_alpha_missing_inputs']
+            return row
+        alpha = row['fuselage_alpha_deg'] - correction
+        if not math.isfinite(alpha):
+            row['aero_reason'] = 'NASA-corrected wing AoA unavailable. Expected a finite result.'
+            return row
+        row.update(wing_alpha_deg=alpha, alpha_deg=alpha,
+                   wing_alpha_status='CALCULATED FROM SOURCE-BACKED ROTOR INPUTS AND USER-PRESCRIBED PITCH')
+        if row['mach'] is None:
             row['aero_reason'] = 'A finite air temperature above absolute zero is required for Mach'
             return row
-        mach = speed / math.sqrt(1.4 * 287.05 * (temperature + 273.15))
-        row['mach'] = mach
-        left, right = state.left_nacelle_angle_deg, state.right_nacelle_angle_deg
-        if left is None or left != right or not 0 <= left <= 90:
-            row['aero_reason'] = 'NASA wing-pylon lookup requires a common nacelle angle in [0, 90] deg'
-            return row
-        beta = 90 - left
-        row['beta_m_deg'] = beta
-        selected, reason = polar.evaluate(alpha, beta, mach)
+        selected, reason = polar.evaluate(alpha, beta, row['mach'])
         if selected is None:
             row['aero_reason'] = reason
             return row
@@ -1334,12 +1433,19 @@ def transition_wing_forces(state, aircraft, environment, polar):
         row['wing_pylon_lookup_status'] = lookup_status
         row['aero_status'] = lookup_status + ' / FREESTREAM ESTIMATE'
     else:
+        if row['gamma_deg'] is None:
+            row['aero_reason'] = 'Flight-path angle and AoA undefined at insufficient planar airspeed'
+            return row
         incidence = aircraft.wing_incidence_deg
         if incidence is None or not math.isfinite(incidence):
             row['aero_reason'] = 'Wing incidence unavailable'
             return row
-        alpha = incidence - row['gamma_deg']
-        row['alpha_deg'] = alpha
+        fuselage_alpha = row['fuselage_alpha_deg']
+        alpha = incidence + (fuselage_alpha if fuselage_alpha is not None else -row['gamma_deg'])
+        basis = 'PRESCRIBED PITCH' if pitch is not None else 'ASSUMED LEVEL ATTITUDE'
+        row.update(wing_alpha_deg=alpha, alpha_deg=alpha,
+                   wing_alpha_status=f'APPROXIMATE / USER POLAR / {basis}',
+                   wing_alpha_source='Geometric AoA with XML wing incidence for the user polar')
         coefficients = polar.coefficients(alpha)
         if coefficients is None:
             row['aero_reason'] = f'AoA outside table range [{polar.rows[0][0]}, {polar.rows[-1][0]}] deg'
@@ -1356,14 +1462,21 @@ def transition_wing_forces(state, aircraft, environment, polar):
     return row
 
 
-def simulate_transition(takeoff, aircraft, environment, polar, duration_s, timestep_s, end_angles):
-    """Integrate only available modeled forces, holding Phase 1 thrust magnitudes."""
+def simulate_transition(takeoff, aircraft, environment, polar, duration_s, timestep_s, end_angles, *,
+                        pitch_attitude_deg=None, rotor_flow_provider=None):
+    """Integrate available forces using held Phase 1 thrust and prescribed AoA pitch.
+
+    A rotor_flow_provider(state, environment) may supply source-backed XV15RotorFlow
+    for each NASA lookup. The Phase 1 prototype does not provide these inputs.
+    """
     for label, value in (('Phase 2 duration', duration_s), ('Timestep', timestep_s)):
         require_finite(label, value, 0)
         if value == 0:
             raise ValueError(f'{label} must be positive')
     left_end, right_end = map(validate_transition_angle, end_angles)
-    state = initialize_transition(takeoff)
+    if pitch_attitude_deg is not None:
+        require_finite('Phase 2 pitch attitude', pitch_attitude_deg)
+    state = replace(initialize_transition(takeoff), pitch_attitude_deg=pitch_attitude_deg)
     result = dict(final_state=state, elapsed_s=0.0, requested_s=duration_s, rows=[], simplified=polar is None,
                   status='UNAVAILABLE', reason='')
     if takeoff['motion']['takeoff_status'] != 'AIRBORNE' or state.height_agl_m <= 0:
@@ -1399,7 +1512,9 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
                         f'{side}_rotor_status': rotor['status'],
                         f'{side}_rotor_reason': rotor['reason'],
                         f'{side}_rotor_calibration': rotor.get('source_status', rotor.get('calibration_status', 'UNAVAILABLE'))})
-        row.update(transition_wing_forces(state, aircraft, environment, polar))
+        rotor_flow = (rotor_flow_provider(state, environment)
+                      if isinstance(polar, XV15WingPylonPolar) and rotor_flow_provider is not None else None)
+        row.update(transition_wing_forces(state, aircraft, environment, polar, rotor_flow=rotor_flow))
         rotors_known = all(vector is not None for vector in rotor_vectors)
         rotor_forward = sum(vector[0] for vector in rotor_vectors) if rotors_known else None
         rotor_up = -sum(vector[2] for vector in rotor_vectors) if rotors_known else None
@@ -1457,7 +1572,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
 
 
 def report_transition_equations(simplified=False, nasa=False):
-    print('Assumptions: level, facing north; forward/up positive; east wind excluded from the 2D flow.')
+    print('The inertial plane faces north. Forward and up are positive. East wind is excluded from the 2D flow.')
     print('Nacelles: independent linear ramps over requested duration, 0 deg forward / 90 deg up.')
     print('Rotor magnitudes held at Phase 1 values with original calibration status. Prototype T = CT rho A (Omega R)^2.')
     print('V_air = V_ground - V_wind; wind-FROM projects as -speed*cos(direction) north.')
@@ -1466,13 +1581,17 @@ def report_transition_equations(simplified=False, nasa=False):
         print('Constant CL and CD; wing forward = -D; wing up = L.')
     else:
         print('gamma = atan2(V_air_up, V_air_forward).')
+        print('Fuselage alpha_F = user-prescribed nose-up pitch - gamma.')
         if nasa:
-            print('NASA freestream lookup: alpha_W = -gamma, beta_m = 90 deg - nacelle angle.')
+            print('NASA report mast beta_m = 90 deg - nacelle angle.')
+            print('x_R/W = X_RW0 + beta_m * (X_RW1 + beta_m * X_RW2), with beta_m in degrees.')
+            print('Eq. 57.3: alpha_W = alpha_F - K_XRW * x_R/W * (C_RFR + C_RFL) / max(mu, 0.15)^2.')
+            print('mu is the mean mast-plane advance ratio. Convert the rotor-flow correction to degrees for lookup.')
             print('S = 181 ft². CL/CD use matched AoA, flap and Mach coverage at the selected mast endpoints.')
         else:
-            print('Wing AoA = incidence - gamma; CL/CD interpolated within the supplied table.')
+            print('User polar wing AoA approximation = pitch + incidence - gamma; level attitude if pitch is absent.')
         print('Wing forward = -L*sin(gamma) - D*cos(gamma); wing up = L*cos(gamma) - D*sin(gamma).')
-    print('Each rotor forward = T*cos(nacelle); up = T*sin(nacelle).')
+    print('The held-thrust demonstration projects each rotor forward = T*cos(nacelle); up = T*sin(nacelle).')
     print('Net forward = rotor forward + wing forward; net up = rotor up + wing up - mass*g.')
     print('a = F_net/m; v_next = v + a*dt; position_next = position + v*dt + 0.5*a*dt².')
 
@@ -1564,10 +1683,20 @@ def report_transition_checkpoints(rows):
         ('a up (m/s²)', field('vertical_acceleration_mps2')),
     ))
     nasa = 'wing_pylon_lookup_status' in rows[0]
+    aoa_columns = (
+        ('t (s)', field('phase2_time_s')),
+        ('Air fwd (m/s)', field('air_forward_mps')),
+        ('Air up (m/s)', field('air_up_mps')),
+        ('Pitch (deg)', field('pitch_attitude_deg')),
+        ('Gamma (deg)', field('gamma_deg')),
+        ('Fuselage AoA (deg)', field('fuselage_alpha_deg')),
+    )
+    if nasa:
+        aoa_columns += (('Rotor correction (deg)', field('rotor_flow_correction_deg')),)
+    table('ANGLE OF ATTACK CHECKPOINTS', aoa_columns + (('Wing AoA (deg)', field('wing_alpha_deg')),))
     lookup_columns = (
         ('t (s)', field('phase2_time_s')),
         ('Tilt L/R (deg)' if asymmetric else 'Tilt (deg)', angle),
-        ('AoA (deg)', field('alpha_deg')),
     )
     if nasa:
         first = rows[0]
@@ -1582,9 +1711,23 @@ def report_transition_checkpoints(rows):
         ('S (m²)', field('aero_reference_area_m2')),
         ('Drag (N)', field('drag_n')),
     ))
+    for status in dict.fromkeys(row['pitch_attitude_status'] for row in checkpoints):
+        print('Phase 2 pitch attitude: ' + status + (' for the AoA calculation' if status == 'USER-PRESCRIBED' else ''))
+    for status in dict.fromkeys(row['wing_alpha_status'] for row in checkpoints):
+        print('Wing AoA status: ' + status)
+    for source in dict.fromkeys(row['wing_alpha_source'] for row in checkpoints if row['wing_alpha_source']):
+        print('Wing AoA method: ' + source)
+    if nasa:
+        for status in dict.fromkeys(row['rotor_flow_correction_status'] for row in checkpoints):
+            print('Rotor-flow correction: ' + status)
+        for source in dict.fromkeys(row.get('rotor_flow_source') for row in checkpoints if row.get('rotor_flow_source')):
+            print('Rotor-flow input source: ' + source)
+        for status in dict.fromkeys(row['wing_pylon_lookup_status'] for row in checkpoints):
+            print('Wing-pylon coefficient lookup: ' + status)
     for source in dict.fromkeys(row['aero_source'] for row in checkpoints):
         print('Wing coefficient source: ' + source)
-    print('Wing force calculations exclude rotor-wake effects.')
+    if nasa:
+        print('Eq. 57.3 covers the freestream AoA correction. Forces on wing area immersed in the rotor wakes are outside this model.')
     print('Tilt = nacelle direction; L/R = left/right when different. — = unavailable, not zero.')
     print('Lift is wing lift magnitude; net upward force uses the modeled vertical components.')
     for status in dict.fromkeys(row['aero_status'] for row in checkpoints):
@@ -1604,8 +1747,10 @@ def write_transition_audit(rows, audit_path):
          'total_rotor_forward_n', 'total_rotor_up_n'),
         ('wind_speed_mps', 'wind_from_deg', 'wind_forward_mps', 'wind_east_mps',
          'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3',
-         'wing_area_m2', 'wing_incidence_deg', 'gamma_deg', 'alpha_deg',
-         'beta_m_deg', 'table_mast_deg', 'mast_angle_gap_deg',
+         'wing_area_m2', 'wing_incidence_deg', 'pitch_attitude_deg', 'gamma_deg', 'fuselage_alpha_deg',
+         'rotor_flow_correction_deg', 'wing_alpha_deg', 'alpha_deg',
+         'beta_m_deg', 'c_rf_left', 'c_rf_right', 'mu_left', 'mu_right',
+         'rotor_advance_ratio_mean', 'rotor_wing_induction', 'table_mast_deg', 'mast_angle_gap_deg',
          'flap_deg', 'flaperon_deg', 'mach', 'q_pa', 'aero_reference_area_m2',
          'cl', 'cd', 'lift_n', 'drag_n', 'wing_forward_n', 'wing_up_n'),
         ('net_forward_n', 'net_up_n', 'forward_acceleration_mps2', 'vertical_acceleration_mps2'),
@@ -1867,8 +2012,9 @@ def report_data_status(takeoff, transition, aircraft, polar):
         print('Wing coefficients: ILLUSTRATIVE — Phase 2 uses constant CL/CD assumptions, not an AoA-based XV-15 polar.')
     if transition['rows']:
         row = transition['rows'][-1]
-        if row['alpha_deg'] is not None:
-            print(f'Wing AoA (last Phase 2 evaluation): CALCULATED — {format_quantity(row["alpha_deg"], "deg")}; coefficient and force availability are separate.')
+        if row['wing_alpha_deg'] is not None:
+            print(f'Wing AoA (last Phase 2 evaluation): {row["wing_alpha_status"]} — '
+                  f'{format_quantity(row["wing_alpha_deg"], "deg")}')
         elif polar is None:
             print('Wing AoA (Phase 2): NOT CALCULATED by the constant-coefficient model.')
         else:
@@ -1896,7 +2042,7 @@ def report_data_status(takeoff, transition, aircraft, polar):
     print('Wing force coverage: validated XV-15 forces across AoA and configurations are not established; calculated AoA alone does not supply coefficients.')
     print('Rotor mast power: UNAVAILABLE — commanded shaft power and power split are unknown.')
     print('Phase 1 wing loads, ground effect and wind response: NOT MODELED.')
-    print('Phase 2 rotor inflow/RPM response, ground effect, rotor/wing interference, other airframe loads, '
+    print('Phase 2 rotor inflow/RPM response, ground effect, wake-immersed wing loads, other airframe loads, '
           'power limits, lateral motion and attitude dynamics: NOT MODELED.')
 
 
@@ -1929,7 +2075,7 @@ def report_takeoff_diagnostics(result, verbose=False):
         print('  No OGE 7% download or reported 93% efficiency is silently applied to runway liftoff.')
 
 
-def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, end_angles):
+def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, end_angles, pitch_attitude_deg=None):
     model = takeoff['rotor_model']
     illustrative = any('ILLUSTRATIVE' in (takeoff[side].get('source_status') or
                                           takeoff[side].get('calibration_status') or '')
@@ -1954,6 +2100,8 @@ def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, en
           f'{format_quantity(aircraft.wing_incidence_deg, "°")}')
     print(f'Phase 1 nacelle direction: {format_quantity(aircraft.nacelle_angle_deg, "°")} each (0° forward, 90° up; not blade pitch)')
     print(f'Phase 2 nacelle targets (left/right): {end_angles[0]:g}° / {end_angles[1]:g}° (linear ramps)')
+    if pitch_attitude_deg is not None:
+        print(f'Phase 2 pitch attitude: {pitch_attitude_deg:g}° (user-prescribed for AoA, nose-up positive)')
     if model == 'prototype-collective':
         for side in ('left', 'right'):
             rotor = takeoff[side]
@@ -1973,6 +2121,8 @@ def main(argv=None):
     parser.add_argument('--diagnostics', action='store_true', help='show XML sources and takeoff blockers')
     parser.add_argument('--duration', '--phase1-duration', type=float, help='Phase 1 duration in seconds')
     parser.add_argument('--transition-duration', type=float, help='Phase 2 duration in seconds')
+    parser.add_argument('--transition-pitch-deg', type=float, metavar='DEG',
+                        help='user-prescribed pitch attitude for Phase 2 AoA, held constant with nose-up positive')
     parser.add_argument('--transition-end', default='0:0', metavar='LEFT:RIGHT',
                         help='ending nacelle angles in degrees, default 0:0')
     wing_model = parser.add_mutually_exclusive_group()
@@ -2016,6 +2166,8 @@ def main(argv=None):
                         ('--dt', args.dt)):
         if value is not None and (not math.isfinite(value) or value <= 0):
             parser.error(f'{flag} must be finite and positive')
+    if args.transition_pitch_deg is not None and not math.isfinite(args.transition_pitch_deg):
+        parser.error('--transition-pitch-deg must be finite')
     if args.polar_source and args.transition_polar is None:
         parser.error('--polar-source requires --transition-polar')
     if args.transition_flaps and (args.transition_polar or args.illustrative_transition):
@@ -2118,11 +2270,13 @@ def main(argv=None):
     phase1_duration, phase2_duration = durations
     result = simulate_takeoff(aircraft, environment, phase1_duration, args.dt,
                               rotor_model=args.rotor_model, ct_override=args.prototype_ct, **collective_options)
-    report_run_inputs(aircraft, environment, result, phase1_duration, phase2_duration, args.dt, end_angles)
+    report_run_inputs(aircraft, environment, result, phase1_duration, phase2_duration, args.dt, end_angles,
+                      pitch_attitude_deg=args.transition_pitch_deg)
     print('\nPHASE 1 — HELICOPTER TAKEOFF')
     report_takeoff(result)
     print(f"Phase 1 elapsed: {result['elapsed_s']:.6g} / {phase1_duration:.6g} s")
-    transition = simulate_transition(result, aircraft, environment, polar, phase2_duration, args.dt, end_angles)
+    transition = simulate_transition(result, aircraft, environment, polar, phase2_duration, args.dt, end_angles,
+                                     pitch_attitude_deg=args.transition_pitch_deg)
     report_timed_transition(transition, args.transition_audit)
     report_final_state(transition, result)
     report_xv15_calculations(aircraft, result)

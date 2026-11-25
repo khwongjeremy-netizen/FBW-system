@@ -1,6 +1,6 @@
 """NASA CR-166536 (TR-1195-2 Rev. A), Appendix B, XV-15 wing-pylon data.
 
-Source: NASA_CR166536_Appendix_B_screenshots.pdf, screenshots 3–13.
+Source: NASA_CR166536_Appendix_B_screenshots.pdf, screenshots 2–13.
 https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf
 Where the footer is cropped, the printed page follows the continuation
 sequence B-34 through B-44.
@@ -13,6 +13,12 @@ dash, or Not Defined cell. Repeated rows retain both page references.
 These are report model inputs. The report describes wind-tunnel-based
 coefficients through stall and approximate coefficients beyond stall.
 """
+
+
+# NASA CR-166536 Appendix B, p. B-33: (K_XRW, X_RW0, X_RW1, X_RW2).
+# Appendix A, p. A-52, specifies dimensionless, dimensionless, per degree,
+# and per degree squared, respectively. Use the report mast angle in degrees.
+ROTOR_WING_INDUCTION = (0.26, 0.0806, 0.00003341, 0.000007386)
 
 
 LIFT_TABLES = (
