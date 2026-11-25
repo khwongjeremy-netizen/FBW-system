@@ -21,6 +21,9 @@ and wind determine the early Phase 2 flow. `--transition-pitch-deg` holds an
 explicit nose-up-positive body pitch for the AoA calculation. With the
 bundled rotor model the NASA path reports the first evaluated flow and the
 missing rotor inputs before it can advance.
+Add `--illustrative-rotor-flow` to exercise Eq. 57.3 with the assumptions
+listed below. The coefficient lookup still depends on the report's actual
+table coverage.
 For a software-only run of the older constant-coefficient demonstration, add
 `--illustrative-transition`.
 
@@ -61,18 +64,38 @@ stall and approximations above stall (pp. 26–27).
   `K_XRW * x_R/W * (C_RFR + C_RFL) / max(mu, 0.15)^2`.
   TMPE uses the left/right mean advance ratio and
   `x_R/W = X_RW0 + beta_m * (X_RW1 + beta_m * X_RW2)` from p. A-70,
-  with mast angle in degrees and the constants from p. B-33. The correction
-  is converted to degrees for the lookup. This angle definition has no
+  with mast angle in degrees and the constants from p. B-33. The AoA
+  subtraction stays in radians. The resulting wing AoA is converted to
+  degrees for the table lookup. This angle definition has no
   separate wing-incidence term.
-- **Rotor-flow inputs.** Each `C_RF` is the resultant mast-axis rotor force
-  divided by `rho * pi * effective_speed^2 * R^4` (pp. A-34–A-38). Each
-  advance ratio uses air-relative hub speed in the mast plane divided by
-  effective tip speed (pp. A-18–A-20). The prototype's axial thrust and
-  design RPM do not supply these operating-state quantities. Python callers
-  can pass `rotor_flow_provider(state, environment)` to `simulate_transition()`
-  to return a sourced `XV15RotorFlow` for each step. If a required AoA input
-  is missing, TMPE reports any available fuselage AoA, leaves the NASA wing
-  angle, coefficients and loads blank, and stops Phase 2 at that step.
+- **Rotor-flow inputs.** The Phase 2 provider runs at every evaluated NASA
+  lookup step. It applies the right and left hub velocity transforms of
+  pp. A-18–A-19 to body `U, V, W`, body rates, and CG-to-hub lever terms.
+  It computes shaft speed as `Omega = RPM * 2*pi / 60` and corrects it
+  for the body rates using p. A-16. Page A-20 uses that corrected speed
+  `Omega_prime` for `mu = hypot(U_HM, V_HM) / (Omega_prime * R)`.
+  Page A-38 uses the **unprimed shaft speed** for the force coefficient
+  `C_RF = hypot(T, H, Y) / (rho * pi * Omega^2 * R^4)`.
+  The arithmetic mean of left and right advance ratios is specified on
+  p. A-70. Figure A4-2 covers the wake-immersed wing calculation.
+  [NASA CR-166536, Appendix A](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
+- **Input availability.** TMPE has a pitch-plane flow projection and uses the
+  diameter from `rotor.xml`. The built-in provider uses the 1° lateral mast
+  tilt from the XV-15 input deck. Source-backed calculations still require
+  the operating body-axis flow and rates, matched CG-to-hub geometry where
+  rates are nonzero, and instantaneous RPM and mast-axis `T, H, Y` on each
+  rotor. The XML tilt-axis stations and design RPM describe reference
+  conditions. When a required input is missing, TMPE reports any available
+  fuselage AoA, leaves the corrected wing angle, coefficients, and loads
+  blank, and stops Phase 2 at that step.
+  [NASA CR-166535, Appendix I, p. I-2](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166535_881.pdf)
+- **Illustrative rotor flow.** `--illustrative-rotor-flow` opts into a
+  planar projection with `V = 0` and east wind omitted. It sets
+  `p = q = r = 0`, so the hub lever terms drop out. Both rotors use
+  constant XML design hover RPM, held Phase 1 axial thrust, and
+  `H = Y = 0`. The correction, lookup, and resulting loads are labeled
+  **ILLUSTRATIVE / UNVALIDATED**. The option still needs prescribed pitch
+  and an airborne Phase 1 handoff.
 - **Flaps and Mach.** `--transition-flaps FLAP:FLAPERON` holds one setting
   for the run. The default is `40:25`. The other available settings are
   `0:0`, `20:12.5`, and `75:47` (p. A-133). The lookup matches the flap pair
@@ -84,6 +107,15 @@ stall and approximations above stall (pp. 26–27).
   `S_WFS = S_W - S_iWL - S_iWR` (p. A-70). TMPE corrects the freestream
   angle and uses the full GTRS reference area of 181 ft² (16.81545024 m²), as
   documented by NASA TM-4448 Appendix A. [NASA TM-4448](https://ntrs.nasa.gov/api/citations/19930013297/downloads/19930013297.pdf)
+
+Python callers can pass `rotor_flow_provider(state, environment)` to
+`simulate_transition()`. Return a sourced `XV15RotorInputs` with signed
+body velocity in m/s, body rates in rad/s, lateral mast tilt in degrees,
+and a left and right `XV15RotorOperatingPoint` with RPM and forces in
+newtons. Provide the report's `LXH, LYH, LZH` in meters for the current
+mast angle or supply matched CG and right shaft-pivot datums and mast length
+through `XV15RotorHubGeometry`. The hook also accepts previously resolved
+`XV15RotorFlow` values and identifies them as externally supplied in the audit.
 
 ### Alternate coefficient inputs
 
@@ -158,9 +190,11 @@ All evaluated rows are saved to a unique `output/stage2_audit_*.csv`
 in the working directory. Use `--transition-audit` to choose a new file path.
 The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
 and aerodynamic provenance. It shows air-relative velocity, flight-path
-angle, pitch, and fuselage AoA. NASA rows also show the rotor-flow inputs
-and correction, corrected wing AoA, any missing inputs, requested report mast,
-Mach, flap/flaperon setting, reference area, source and lookup status.
+angle, pitch, and fuselage AoA. NASA rows also show body-axis velocity,
+body rates, hub lever terms, mast-axis hub velocities, shaft and corrected
+rotor speeds, `T, H, Y`, `C_RF`, and per-rotor and mean advance ratios.
+The same rows include the rotor correction, corrected wing AoA, missing
+inputs, sources, assumptions, and lookup status.
 When a single mast table is used, the CSV also records its angle and
 the angular gap. Blank numerical cells represent unavailable
 quantities. A preflight block before any step is reported on the console.
