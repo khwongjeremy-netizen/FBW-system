@@ -1136,6 +1136,68 @@ class NASAFlowTransitionTests(unittest.TestCase):
             self.assertAlmostEqual(row[f'mu_{side}'], math.hypot(*mast[:2]) / (effective * radius))
             self.assertAlmostEqual(row[f'c_rf_{side}'], math.hypot(30000, 3000, 4000) / denominator)
 
+    def test_wind_azimuth_uses_mirrored_hub_flow_and_preserves_undefined_direction(self):
+        point = tmpe.XV15RotorOperatingPoint(rpm=565)
+        inputs = tmpe.XV15RotorInputs('Synthetic rotor kinematics', body_velocity_mps=(-4, 3, 0),
+                                      body_rates_rad_s=(.1, .2, 0), lateral_mast_tilt_deg=0,
+                                      hub_offsets_m=(0, 0, 0), left=point, right=point)
+        _, row, _ = tmpe.calculate_xv15_rotor_flow(inputs, self.aircraft, 0, None, None, None, 1.225)
+        omega = 565 * math.tau / 60
+        for side, sign in (('left', -1), ('right', 1)):
+            self.assertAlmostEqual(row[f'{side}_wind_azimuth_rad'], math.atan2(sign * 3, -4))
+            self.assertAlmostEqual(row[f'{side}_wind_mast_p_hat'], sign * .04 / omega)
+            self.assertAlmostEqual(row[f'{side}_wind_mast_q_hat'], -.22 / omega)
+            self.assertEqual(row[f'{side}_wind_azimuth_status'], 'CALCULATED')
+            self.assertIsNone(row[f'{side}_rotor_h_bar_n'])
+            self.assertIn('induced inflow ratio lambda_i', row[f'{side}_nasa_in_plane_missing_inputs'])
+
+        axial = tmpe.replace(inputs, body_velocity_mps=(0, 0, -2))
+        _, row, _ = tmpe.calculate_xv15_rotor_flow(axial, self.aircraft, 0, None, None, None, 1.225)
+        self.assertIsNone(row['left_wind_azimuth_rad'])
+        self.assertEqual(row['mu_left'], 0)
+        self.assertAlmostEqual(row['left_in_plane_lambda_zero'], 2 / (omega * 3.81))
+
+    def test_in_plane_coefficients_and_side_specific_rotation_feed_c_rf(self):
+        state = tmpe.XV15InPlaneState(
+            source='Synthetic software test in NASA local rotor coordinates', lift_slope_per_rad=5,
+            cs0=0, cs1=0, cs2=.4, cc1=.2, cc2=0, h_lambda_coefficient=.3, profile_drag_factor=.05,
+            induced_inflow=.1, inflow_distribution=2, coning_rad=0,
+            longitudinal_flap_rad=.2, lateral_flap_rad=.3,
+            lateral_cyclic_mast_rad=0, longitudinal_cyclic_mast_rad=0,
+        )
+        point = tmpe.XV15RotorOperatingPoint(565, 123, in_plane_state=state)
+        inputs = tmpe.XV15RotorInputs('Synthetic rotor kinematics', body_velocity_mps=(0, 4, -2),
+                                      body_rates_rad_s=(0, 0, 0), lateral_mast_tilt_deg=0, left=point, right=point)
+        _, row, missing = tmpe.calculate_xv15_rotor_flow(inputs, self.aircraft, 0, None, None, None, 1.225)
+        self.assertEqual(missing, [])
+        radius = 3.81
+        tip_speed = 565 * math.tau / 60 * radius
+        denominator = 1.225 * math.pi * radius**2 * tip_speed**2
+        solidity = 3 * (14 * .0254) / (math.pi * radius)
+        scale = .5 * solidity * 5 * denominator
+        inflow = .1 + 2 / tip_speed
+        coupling = math.tan(math.radians(-15))
+        expected_h_bar = scale * (.08 - .09 * inflow
+                                  + .05 * math.hypot(1, 4 * inflow / 3) * 16 / (3 * tip_speed)
+                                  + coupling * (.03 * inflow + (8 / 75) * inflow**2))
+        expected_y_bar = scale * (.4 * (.3 - 2 * .2 / 3) - .2 * inflow * 1.5 * (.3 - 8 * .2 / 9)
+                                  - coupling * (.02 * inflow + (16 / 225) * inflow**2))
+        for side, sign in (('left', -1), ('right', 1)):
+            self.assertAlmostEqual(row[f'{side}_rotor_h_bar_n'], expected_h_bar)
+            self.assertAlmostEqual(row[f'{side}_rotor_y_bar_n'], expected_y_bar)
+            self.assertAlmostEqual(row[f'{side}_rotor_h_n'], sign * expected_y_bar)
+            self.assertAlmostEqual(row[f'{side}_rotor_y_n'], -sign * expected_h_bar)
+            self.assertEqual(row[f'{side}_rotor_t_n'], 123)
+            self.assertAlmostEqual(row[f'c_rf_{side}'], math.hypot(123, expected_h_bar, expected_y_bar) / denominator)
+
+        uncertain = tmpe.replace(state, h_lambda_coefficient=None)
+        inputs = tmpe.replace(inputs, left=tmpe.replace(point, in_plane_state=uncertain))
+        _, row, _ = tmpe.calculate_xv15_rotor_flow(inputs, self.aircraft, 0, None, None, None, 1.225)
+        self.assertIn('verified coefficient of the H-bar lambda', row['left_nasa_in_plane_missing_inputs'])
+        self.assertIsNone(row['left_rotor_h_bar_n'])
+        self.assertAlmostEqual(row['left_rotor_y_bar_n'], expected_y_bar)
+        self.assertIsNone(row['c_rf_left'])
+
     def test_cli_preflight_audit_records_default_provenance_and_blank_hover_ct(self):
         output = io.StringIO()
         with tempfile.TemporaryDirectory() as folder:

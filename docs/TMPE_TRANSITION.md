@@ -88,7 +88,8 @@ stall and approximations above stall (pp. 26–27).
   `rotor.xml` as the operating speed for both modeled rotors. It uses the
   1° lateral mast tilt from the XV-15 input deck and the held Phase 1 axial
   thrust for `T` on each rotor, with the selected Phase 1 calibration status.
-  The bundled rotor models provide no `H` or `Y`, which blocks both
+  The bundled rotor models lack the operating inputs for
+  [NASA rotor in-plane forces](#nasa-rotor-in-plane-forces). This blocks both
   `C_RF` values and the wing AoA correction. With prescribed pitch, TMPE
   still calculates `U`, `W` and both mast-plane advance ratios using the
   planar assumptions `V = 0` and `p = q = r = 0`.
@@ -131,6 +132,61 @@ report's mirrored `LXH, LYH, LZH` lever terms in meters for symmetric
 geometry, or matched CG and right shaft-pivot datums and mast length
 through `XV15RotorHubGeometry`. The hook also accepts previously resolved
 `XV15RotorFlow` values and identifies them as externally supplied in the audit.
+
+### NASA rotor in-plane forces
+
+Each rotor's wind azimuth is `xi = atan2(V_HM, U_HM)` in radians from
+its local mast-plane hub velocities (pp. A-17–A-20). The left mast-plane
+transform and mast-rate equations carry their own signs before the azimuth
+rotation. The air-relative velocity already accounts for aircraft heading
+and the entered wind. A missing or zero mast-plane velocity leaves `xi`
+unavailable. The latest tracked audit uses the north-facing setup, 5 m/s wind
+from 180°, 90° nacelles, and no prescribed Phase 2 pitch. Both hub-plane
+velocities and azimuths are unavailable for that run.
+[NASA CR-166536, Appendix A](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166) ·
+[Latest tracked audit](../output/stage2_audit_a_yhotbm.csv)
+
+TMPE divides each rotor's wind-mast angular rates by `Omega_prime` and
+calculates the axial hub contribution `lambda_0 = -W_HM / (Omega_prime * R)`.
+The supplied induced ratio forms `lambda = lambda_0 + lambda_i` (Fig. A1-3).
+Page A-21 rotates the supplied local mast-axis cyclic angles into wind-mast
+axes. The wind-mast force scale is
+`Q6 = 0.5 * sigma * a * rho * pi * R**2 * (Omega_prime * R)**2` in newtons.
+Section 9 starts `H_bar` on printed p. A-30 and continues with `Y_bar`
+on p. A-31. Section 10 uses these two components and the same rotor's
+azimuth to rotate into mast axes.
+[NASA CR-166536, pp. A-16–A-31](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
+
+```text
+H = H_bar * cos(xi) + Y_bar * sin(xi)
+Y = -H_bar * sin(xi) + Y_bar * cos(xi)
+```
+
+Set `XV15RotorOperatingPoint.in_plane_state` to a sourced
+`XV15InPlaneState` for each rotor with operating data. Include any input
+assumptions in that state. The remaining inputs come from the existing
+rotor-flow calculation or the aircraft XML.
+
+| Required input and units | Source and availability |
+| --- | --- |
+| `R` (m), `sigma` (dimensionless), `tan(delta3)` (dimensionless) | In `rotor.xml`, `rotor_diameter` is 25 ft, `rotor_blades_per_hub` is 3, `blade_chord` is 14 in, and `pitch_flap_coupling_angle` is −15°. TMPE converts the radius to 3.81 m and the chord to 0.3556 m, computes `sigma = n_b * chord / (pi * R)` (about 0.08913), and takes the tangent of the coupling angle in radians. |
+| `rho` (kg/m³), `Omega_prime R` (m/s), `mu`, `lambda_0`, `p_hat`, `q_hat` (dimensionless) | Density is an environment input. Rotor RPM, mast angles, air-relative hub velocities, and body rates come from the existing model or provider. The built-in planar path assumes zero lateral body velocity and body rates, and excludes cross-plane wind. Verified CG-to-hub offsets are required when body-rate corrections depend on them. |
+| Effective blade lift slope `a` (per radian), blade-pitch coefficients `CS0`, `CS1`, `CS2`, `CC1`, `CC2` (dimensionless), effective profile drag factor `Cdf` (dimensionless) | Supply operating values through `XV15InPlaneState` (pp. A-14–A-22). The project has overall blade twist and unverified endpoints. Deriving the pitch coefficients requires the blade station and twist distribution, the applicable zero-lift angle, and the rotor's root collective. The wing-pylon tables describe wing loads. |
+| Coefficient of the `H_bar` term multiplying `lambda * (3/2 * a_bar1 - p_hat)` (dimensionless) | The indexed scan leaves the coefficient subscript ambiguous on p. A-30. Supply a checked value as `h_lambda_coefficient`. |
+| Induced inflow ratio `lambda_i` and inflow distribution factor `K` (dimensionless) | Supply operating values through `XV15InPlaneState` (Fig. A1-3 and p. A-29). Mast-axis hub velocity `W_HM` supplies the axial contribution. The bundled rotor model has no induced-inflow state. |
+| Operating coning `a0`, wind-mast flapping `a_bar1` and `b_bar1`, and local mast-axis cyclic `A1` and `B1` (rad) | Supply per-rotor operating values through `XV15InPlaneState` (pp. A-21–A-28). The XML precone of 2.5° and mechanical flapping limit of ±12° describe configuration and travel. The pilot collective command supplies neither cyclic angle. |
+
+The companion XV-15 input deck lists static twist stations, blade-pitch,
+lift and drag parameters, and inflow-distribution constants. These are
+references for deriving the operating quantities above. The current
+bundled run leaves those operating inputs unavailable.
+[NASA CR-166535, Appendix I, pp. I-2–I-4](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166535_881.pdf)
+
+An explicitly supplied mast-axis `H`/`Y` pair retains its provenance.
+The explicit illustrative option provides an assumed zero pair. Otherwise
+the NASA path supplies a complete calculated pair when its inputs are
+available. The selected pair can enter `C_RF` with the separately modeled
+`T` and the p. A-38 normalization.
 
 ### Alternate coefficient inputs
 
@@ -209,8 +265,11 @@ The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
 and aerodynamic provenance. It shows air-relative velocity, flight-path
 angle, pitch, and fuselage AoA. Evaluated rows with raw rotor inputs also show body-axis velocity,
 body rates, hub geometry, each rotor's mast angle, body- and mast-axis hub
-velocities, accepted RPM, shaft and corrected rotor speeds, `T, H, Y`,
-`C_RF`, and per-rotor and mean advance ratios. The audit distinguishes any
+velocities, accepted RPM, shaft and corrected rotor speeds, wind azimuth,
+NASA operating inputs and wind-mast forces, selected `T, H, Y`,
+`C_RF`, and per-rotor and mean advance ratios. Status and source fields
+identify the equations and inputs, and missing-input fields explain
+unavailable NASA results. The audit distinguishes any
 coefficient from the selected TMPE rotor model from the CR-177436 hover
 estimate and records source coverage and applicability. Units appear in
 column names where applicable. Blank numerical cells indicate unavailable
