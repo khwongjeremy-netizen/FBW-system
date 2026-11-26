@@ -1112,6 +1112,52 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertAlmostEqual(first['rotor_flow_correction_rad'], correction)
         self.assertAlmostEqual(first['wing_alpha_rad'], first['fuselage_alpha_rad'] - correction)
 
+    def test_per_rotor_hub_axes_and_speed_with_nonzero_body_rates(self):
+        point = tmpe.XV15RotorOperatingPoint(565, 30000, 3000, -4000)
+        inputs = tmpe.XV15RotorInputs('Synthetic signed-offset test', body_velocity_mps=(5, 1, 2),
+                                      body_rates_rad_s=(.1, .2, .3), lateral_mast_tilt_deg=0,
+                                      left=point, right=point,
+                                      left_hub_offset_body_m=(2, -3, -1),
+                                      right_hub_offset_body_m=(3, 4, -2))
+        _, row, missing = tmpe.calculate_xv15_rotor_flow(
+            inputs, self.aircraft, None, None, None, None, 1.225, rotor_mast_angles_deg=(0, 90))
+        self.assertEqual(missing, [])
+        omega = 565 * math.tau / 60
+        radius = 3.81
+        denominator = 1.225 * math.pi * radius**2 * (omega * radius)**2
+        for side, body, mast, effective in (
+            ('left', (5.7, 1.7, 1.3), (5.7, -1.7, 1.3), omega + .3),
+            ('right', (3.4, 2.1, 1.8), (1.8, 2.1, -3.4), omega + .1),
+        ):
+            for frame, values in (('body', body), ('mast', mast)):
+                for axis, value in zip(('u', 'v', 'w'), values):
+                    self.assertAlmostEqual(row[f'{side}_hub_{axis}_{frame}_mps'], value)
+            self.assertAlmostEqual(row[f'{side}_rotor_omega_effective_rad_s'], effective)
+            self.assertAlmostEqual(row[f'mu_{side}'], math.hypot(*mast[:2]) / (effective * radius))
+            self.assertAlmostEqual(row[f'c_rf_{side}'], math.hypot(30000, 3000, 4000) / denominator)
+
+    def test_cli_preflight_audit_records_default_provenance_and_blank_hover_ct(self):
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder:
+            audit_path = Path(folder) / 'preflight.csv'
+            with patch('builtins.input', side_effect=['', '5', '', '', '', '', '15', '15']):
+                with contextlib.redirect_stdout(output):
+                    tmpe.main(['--duration', '1', '--transition-duration', '1', '--transition-audit', str(audit_path)])
+            with audit_path.open(newline='') as stream:
+                row, = csv.DictReader(stream)
+        self.assertEqual(row['audit_record'], 'PREFLIGHT ONLY')
+        self.assertEqual(row['air_density_status'], 'DEFAULTED')
+        self.assertEqual(row['wind_speed_status'], 'USER-PRESCRIBED')
+        self.assertEqual(row['rotor_model_status'], 'DEFAULTED')
+        self.assertEqual(row['left_rotor_rpm'], '565')
+        self.assertEqual(row['left_collective_input_deg'], '15')
+        self.assertEqual(row['left_thrust_coefficient'], '')
+        self.assertEqual(row['left_cr177436_hover_ct'], '')
+        self.assertEqual(row['left_hub_u_body_mps'], '')
+        self.assertEqual(row['mu_left'], '')
+        self.assertIn('INPUTS AND ASSUMPTIONS', output.getvalue())
+        self.assertIn('Ames recorded collective is suitable for curve shape only', output.getvalue())
+
 
 class TimedTransitionTests(unittest.TestCase):
     def polar(self, content='alpha_deg,cl,cd\n-180,0.5,0.25\n180,0.5,0.25\n', source=None):

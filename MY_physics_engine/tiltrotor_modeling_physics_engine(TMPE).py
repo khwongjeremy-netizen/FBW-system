@@ -349,12 +349,15 @@ class Environment:
         air_density=1.225,
         temperature=15.0,
         altitude=0.0,
+        *,
+        input_statuses=None,
     ):
         self.windspeed = windspeed
         self.winddirection = winddirection
         self.air_density = air_density
         self.temperature = temperature
         self.altitude = altitude
+        self.input_statuses = {} if input_statuses is None else dict(input_statuses)
 
 
 FLOW_EPS_MPS = 1e-6
@@ -548,12 +551,14 @@ def report_details(environment, aircraft, aero):
         print(f"{label}: {value}")
 
 
-def ask_float(prompt, default=None, minimum=None, places=2):
+def ask_float(prompt, default=None, minimum=None, places=2, *, with_status=False):
     while True:
         suffix = f" [{format_number(default, places)}]" if default is not None else " [Enter to leave unknown]"
         answer = input(f"{prompt}{suffix}: ").strip()
 
         if not answer:
+            if with_status:
+                return default, 'DEFAULTED' if default is not None else 'UNAVAILABLE'
             return default
 
         try:
@@ -570,7 +575,7 @@ def ask_float(prompt, default=None, minimum=None, places=2):
             print(f"Please enter a value of at least {minimum}.")
             continue
 
-        return value
+        return (value, 'USER-PRESCRIBED') if with_status else value
 
 
 def calculate_lift(air_density, airspeed, wing_area_m2, lift_coefficient):
@@ -713,7 +718,10 @@ def calculate_collective_proprotor(side, aircraft, environment, theta, model=Non
         raise ValueError('Proprotor side must be left or right')
     coefficient = (model if model is not None else LinearCollectiveModel.load()).evaluate(
         theta, allow_illustrative=allow_illustrative)
-    metadata = dict(coefficient, side=side, thrust_coefficient=coefficient['value'])
+    calibration = coefficient.get('calibration_status') or ''
+    kind = 'ILLUSTRATIVE LINEAR MODEL' if 'ILLUSTRATIVE' in calibration else 'CONFIGURED LINEAR MODEL'
+    metadata = dict(coefficient, side=side, thrust_coefficient=coefficient['value'],
+                    ct_status=coefficient['status'], ct_data_kind=kind, ct_reason=coefficient['reason'])
     if coefficient['value'] is None:
         return metadata
     thrust = calculate_fixed_ct_proprotor(side, aircraft, environment, ct_override=coefficient['value'])
@@ -790,7 +798,8 @@ def calculate_fixed_ct_proprotor(side, aircraft, environment, *, ct_override=Non
     """One independent rotor evaluation in the rotorcraft CT convention.
 
     D_m = D_ft * 0.3048; R = D_m/2; A = pi R²; Omega = RPM*2*pi/60.
-    T = CT rho A (Omega R)². No engine/shaft/induced power is inferred.
+    T = CT rho A (Omega R)², with the unprimed shaft speed per CR-177436
+    List of Symbols pp. xiv–xv. No engine/shaft/induced power is inferred.
     """
     if side not in ('left', 'right'):
         raise ValueError('Proprotor side must be left or right')
@@ -802,6 +811,8 @@ def calculate_fixed_ct_proprotor(side, aircraft, environment, *, ct_override=Non
                     source_status='ILLUSTRATIVE / SOFTWARE-TEST ONLY — not measured or verified XV-15 data',
                     source=('explicit CT override assumption' if ct_override is not None else
                             'rotor.xml: proprotor_and_drive_system/prototype_thrust_model/thrust_coefficient'),
+                    thrust_coefficient=ct, ct_status='ASSUMED' if ct is not None else 'UNAVAILABLE',
+                    ct_data_kind='RUNTIME ASSUMPTION' if ct_override is not None else 'XML PROTOTYPE ASSUMPTION',
                     assumptions=PROTOTYPE_EXCLUSIONS, inputs=inputs,
                     engine_power_w=None, rotor_shaft_power_w=None, induced_power_w=None)
     errors = []
@@ -823,7 +834,7 @@ def calculate_fixed_ct_proprotor(side, aircraft, environment, *, ct_override=Non
     except (OverflowError, ValueError):
         return dict(unavailable(f'{side}: nonfinite derived thrust from supplied inputs'), **metadata)
     result.update(metadata, diameter_m=diameter, radius_m=radius, disk_area_m2=area,
-                  angular_speed_rad_s=omega, thrust_coefficient=ct)
+                  angular_speed_rad_s=omega)
     return result
 
 
@@ -1217,6 +1228,8 @@ class XV15RotorInputs:
     hub_geometry: XV15RotorHubGeometry | None = None
     lateral_mast_tilt_source: str = ''
     planar_kinematics: bool = False
+    left_hub_offset_body_m: tuple | None = None
+    right_hub_offset_body_m: tuple | None = None
 
 
 ILLUSTRATIVE_ROTOR_FLOW = 'ILLUSTRATIVE / UNVALIDATED'
@@ -1236,12 +1249,76 @@ HUB_GEOMETRY_NEEDED = (
     'at the evaluated mast angles, or matched CG and shaft-pivot FS/BL/WL plus verified '
     'pivot-to-hub mast geometry'
 )
+HOVER_CT_SOURCE = 'NASA CR-177436 List of Symbols pp. xiv–xvi and §7.1, Figs. 7.1–7.3, pp. 50–54'
+HOVER_CT_COVERAGE = (
+    'Isolated full-scale baseline metal rotor hover tests. Figure 7.3 uses measured blade pitch at 0.75R. '
+    'Ames run averages 582.8–586.2 rpm and tip Mach 0.688–0.691. '
+    'The separate WPAFB whirl-tower comparison includes a 740 ft/s tip-speed series.'
+)
+HOVER_CT_LIMITATION = (
+    'Ames recorded collective is suitable for curve shape only, per p. 53. '
+    'The WPAFB pitch comparison is uncorrected for tower blockage and differs by about 4°. '
+    'TMPE lacks a verified pilot-command-to-0.75R pitch mapping and matched test setup, so has no supported pitch interval. '
+    'Installed climb and transition are outside the isolated hover coverage.'
+)
+THRUST_CT_DEFINITION = 'NASA CR-177436 pp. xiv–xv: CT = T / [rho pi R² (unprimed shaft Omega R)²]'
+
+
+def transition_thrust_coefficient_audit(takeoff):
+    """Identify the selected Phase 1 CT and the separate hover-data availability."""
+    audit = dict(cr177436_hover_ct_status='UNAVAILABLE',
+                 cr177436_hover_ct_coverage_status='OUTSIDE DOCUMENTED TEST CONDITIONS',
+                 cr177436_hover_ct_source=HOVER_CT_SOURCE,
+                 cr177436_hover_ct_data_kind='PUBLISHED PLOTS; no graph-digitized values used',
+                 cr177436_hover_ct_coverage=HOVER_CT_COVERAGE,
+                 cr177436_hover_ct_limitation=HOVER_CT_LIMITATION,
+                 thrust_coefficient_definition=THRUST_CT_DEFINITION,
+                 selected_ct_application='Phase 1 model. Phase 2 holds its modeled axial thrust for the demonstration.')
+    for side in ('left', 'right'):
+        rotor = takeoff[side]
+        bounds = rotor.get('pitch_bounds') or {}
+        pitch = rotor.get('theta_deg')
+        audit.update({f'{side}_{key}': value for key, value in (
+            ('cr177436_hover_ct', None),
+            ('cr177436_hover_thrust_n', None),
+            ('collective_input_deg', pitch),
+            ('collective_input_status', 'PROVIDED' if pitch is not None else 'UNAVAILABLE'),
+            ('collective_input_source', 'TMPE pilot collective command; blade angle at 0.75R unverified'),
+            ('thrust_coefficient', rotor.get('thrust_coefficient')),
+            ('ct_status', rotor.get('ct_status', 'UNAVAILABLE')),
+            ('ct_data_kind', rotor.get('ct_data_kind', 'UNAVAILABLE')),
+            ('ct_source', rotor.get('source') if 'ct_status' in rotor else None),
+            ('ct_reason', rotor.get('ct_reason', rotor['reason'])),
+            ('ct_condition', rotor.get('condition')),
+            ('rotor_configuration_source', rotor.get('configuration_source')),
+            ('ct_pitch_min_deg', bounds.get('minimum_deg')),
+            ('ct_pitch_max_deg', bounds.get('maximum_deg')),
+            ('ct_pitch_bounds_basis', bounds.get('basis')),
+            ('ct_pitch_bounds_source', bounds.get('source')),
+        )})
+    return audit
+
+
+def transition_environment_audit(environment):
+    fields = dict(air_density_kg_m3=environment.air_density, wind_speed_mps=environment.windspeed,
+                  wind_from_deg=environment.winddirection, temperature_c=environment.temperature)
+    for name, key, value in (
+        ('air_density', 'air_density', environment.air_density),
+        ('wind_speed', 'windspeed', environment.windspeed),
+        ('wind_from', 'winddirection', environment.winddirection),
+        ('temperature', 'temperature', environment.temperature),
+    ):
+        status = getattr(environment, 'input_statuses', {}).get(key, 'SCENARIO INPUT')
+        fields[f'{name}_status'] = status if value is not None else 'UNAVAILABLE'
+        fields[f'{name}_source'] = 'TMPE CLI prompt default' if status == 'DEFAULTED' else 'TMPE environment scenario input'
+    return fields
 
 
 def transition_rotor_inputs(state, aircraft, *, illustrative=False, takeoff=None):
     """Use the rotation and held axial forces already defined for Phase 2."""
     source = 'TMPE Phase 2 planar state'
     assumptions = ('V = 0 and cross-plane wind omitted. p = q = r = 0. '
+                   'Operating RPM is held at the accepted XML value. '
                    'Per-rotor axial T is held at the Phase 1 value.')
     in_plane_force = None
     in_plane_source = 'TMPE Phase 1 rotor outputs supply axial thrust only'
@@ -1255,7 +1332,7 @@ def transition_rotor_inputs(state, aircraft, *, illustrative=False, takeoff=None
         thrust_source = phase1.get('source') or phase1.get('reason')
         return XV15RotorOperatingPoint(
             aircraft.hover_rotor_rpm, thrust_n, in_plane_force, in_plane_force,
-            rpm_source=f'rotor.xml: {HOVER_RPM_XML_PATH}',
+            rpm_source=f'rotor.xml: {HOVER_RPM_XML_PATH} (held constant)',
             rpm_status='XML-SOURCED / ACCEPTED',
             t_source='Held Phase 1 axial thrust' + (f' ({thrust_source})' if thrust_source else ''),
             t_status='CALCULATED',
@@ -1285,7 +1362,8 @@ def rotor_input_number(value, *, positive=False):
     return None if positive and value <= 0 else value
 
 
-def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps, up_mps, air_density):
+def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps, up_mps, air_density,
+                             *, rotor_mast_angles_deg=None, mast_angle_source=None):
     """Apply the A-16, A-18–A-20 and A-38 equations, retaining partial results."""
     source = inputs.source.strip() if isinstance(inputs.source, str) else ''
     calculated_status = 'CALCULATED'
@@ -1307,41 +1385,34 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
     rates_known = None not in (p, q, r)
     rates_status = 'ASSUMED' if inputs.planar_kinematics else 'PROVIDED'
     rates_source = ZERO_RATES_SOURCE if inputs.planar_kinematics else source
-    lxh, lyh, lzh = map(rotor_input_number, inputs.hub_offsets_m)
     beta_deg = rotor_input_number(beta_deg)
     if beta_deg is not None and not 0 <= beta_deg <= 90:
         beta_deg = None
+    if rotor_mast_angles_deg is None:
+        rotor_mast_angles_deg = (beta_deg, beta_deg)
     phi_deg = rotor_input_number(inputs.lateral_mast_tilt_deg)
-    axes_known = None not in (beta_deg, phi_deg)
-    geometry_status = 'PROVIDED'
-    if axes_known:
-        beta, phi = map(math.radians, (beta_deg, phi_deg))
-        sin_beta, cos_beta = math.sin(beta), math.cos(beta)
+    if phi_deg is not None:
+        phi = math.radians(phi_deg)
         sin_phi, cos_phi = math.sin(phi), math.cos(phi)
-        if inputs.hub_geometry is not None:
-            lxh, lyh, lzh = map(rotor_input_number, inputs.hub_geometry.lever_terms_m(beta, phi))
+    lever_terms = (None, None, None)
+    geometry_status = 'PROVIDED'
+    if rotor_mast_angles_deg[0] == rotor_mast_angles_deg[1]:
+        lever_terms = tuple(map(rotor_input_number, inputs.hub_offsets_m))
+        if None not in (beta_deg, phi_deg) and inputs.hub_geometry is not None:
+            lever_terms = inputs.hub_geometry.lever_terms_m(math.radians(beta_deg), phi)
             geometry_status = calculated_status
     diameter = rotor_input_number(aircraft.rotor_diameter_ft, positive=True)
     radius = diameter * 0.3048 / 2 if diameter is not None else None
     density = rotor_input_number(air_density, positive=True)
     zero_body_rates = (p, q, r) == (0, 0, 0)
-    offsets_known = None not in (lxh, lyh, lzh)
-    hub_known = axes_known and rates_known and (offsets_known or zero_body_rates) and body_known
-    geometry_note = ''
-    if not offsets_known:
-        effect = ('Zero body rates eliminate the hub-offset velocity terms.' if zero_body_rates else
-                  'Required for body-rate corrections to hub velocity and μ.')
-        geometry_note = f'Need {HUB_GEOMETRY_NEEDED}. {effect}'
+    lxh, lyh, lzh = lever_terms
     audit = dict(body_u_mps=u, body_v_mps=v, body_w_mps=w, body_velocity_status=body_status,
                  body_p_rad_s=p, body_q_rad_s=q, body_r_rad_s=r,
                  body_rates_status=rates_status if rates_known else 'UNAVAILABLE',
                  lateral_mast_tilt_deg=phi_deg, lxh_m=lxh, lyh_m=lyh, lzh_m=lzh,
                  lateral_mast_tilt_status='PROVIDED' if phi_deg is not None else 'UNAVAILABLE',
                  lateral_mast_tilt_source=inputs.lateral_mast_tilt_source or source,
-                 hub_geometry_status=geometry_status if offsets_known else 'UNAVAILABLE',
-                 hub_geometry_source=source if offsets_known else '',
                  hub_geometry_xml_fields_inspected=HUB_XML_INSPECTED if inputs.planar_kinematics else '',
-                 hub_geometry_note=geometry_note,
                  rotor_radius_m=radius, rotor_radius_status=calculated_status if radius is not None else 'UNAVAILABLE',
                  rotor_geometry_source=f'rotor.xml: {ROTOR_DIAMETER_XML_PATH}',
                  air_density_status='USER-PRESCRIBED' if density is not None else 'UNAVAILABLE',
@@ -1368,21 +1439,48 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
         (p, 'body roll rate p for hub velocity and Ω′'),
         (q, 'body pitch rate q for hub velocity and Ω′'),
         (r, 'body yaw rate r for hub velocity and Ω′'),
-        (beta_deg, 'common report mast angle beta_m for μ'),
         (phi_deg, 'lateral mast tilt phi_m for μ'),
         (radius, 'positive rotor radius R for μ and C_RF'),
         (density, 'positive air density rho for C_RF'),
     ) if value is None]
-    if not zero_body_rates and not offsets_known:
-        missing.extend(f'CG-to-hub lever {name} for body-rate correction to μ'
-                       for value, name in zip((lxh, lyh, lzh), ('LXH', 'LYH', 'LZH')) if value is None)
     if not source:
         missing.append('source for the rotor operating inputs')
 
-    for side, sign, operating_point in (('left', -1, inputs.left), ('right', 1, inputs.right)):
+    geometry_statuses = []
+    for side, sign, operating_point, mast_angle_deg, signed_offset in (
+        ('left', -1, inputs.left, rotor_mast_angles_deg[0], inputs.left_hub_offset_body_m),
+        ('right', 1, inputs.right, rotor_mast_angles_deg[1], inputs.right_hub_offset_body_m),
+    ):
+        mast_angle_deg = rotor_input_number(mast_angle_deg)
+        if mast_angle_deg is not None and not 0 <= mast_angle_deg <= 90:
+            mast_angle_deg = None
+        axes_known = None not in (mast_angle_deg, phi_deg)
+        if axes_known:
+            beta = math.radians(mast_angle_deg)
+            sin_beta, cos_beta = math.sin(beta), math.cos(beta)
+        offset_status = geometry_status
+        if signed_offset is not None:
+            x, y_offset, z = map(rotor_input_number, signed_offset)
+            offset_status = 'PROVIDED'
+        else:
+            lx, ly, lz = lever_terms
+            if beta_deg is None and axes_known and inputs.hub_geometry is not None:
+                lx, ly, lz = inputs.hub_geometry.lever_terms_m(beta, phi)
+                offset_status = calculated_status
+            x = lx
+            y_offset = None if ly is None else sign * ly
+            z = None if lz is None else -lz
+        offset_known = None not in (x, y_offset, z)
+        if not offset_known:
+            offset_status = 'UNAVAILABLE'
+            if not zero_body_rates:
+                missing.extend(f'{side} CG-to-hub body {axis} for rate correction'
+                               for axis, value in zip(('x', 'y', 'z'), (x, y_offset, z)) if value is None)
+        geometry_statuses.append(offset_status)
         rpm = rotor_input_number(operating_point.rpm, positive=True)
         t, h, y = map(rotor_input_number, (operating_point.t_n, operating_point.h_n, operating_point.y_n))
         missing.extend(f'{side} {label}' for value, label in (
+            (mast_angle_deg, 'mast angle beta_m for mast-axis hub velocity and μ'),
             (rpm, 'operating rotor RPM for Ω, μ and C_RF'),
             (t, 'mast-axis T (axial thrust) for C_RF'),
             (h, 'mast-axis H (in-plane longitudinal force) for C_RF'),
@@ -1390,20 +1488,26 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
         ) if value is None)
         omega = rpm * (math.tau / 60) if rpm is not None else None
         omega_effective = hub_u = hub_v = hub_w = advance_ratio = force_coefficient = None
-        if axes_known and rates_known and omega is not None:
+        u_hb = v_hb = w_hb = None
+        if zero_body_rates:
+            omega_effective = omega
+        elif axes_known and rates_known and omega is not None:
             # A-16 rotor angular velocity in space. The two sides counter-rotate.
             omega_effective = rotor_input_number(
                 omega + sign * p * sin_beta * cos_phi
                 + q * cos_beta * sin_phi - sign * r * cos_beta * cos_phi, positive=True)
             if omega_effective is None:
                 missing.append(f'{side} positive effective rotor speed Omega prime')
-        if hub_known:
-            # A-18 and A-19 use the same lever terms with mirrored lateral signs.
+        body_hub_known = rates_known and body_known and (zero_body_rates or offset_known)
+        if body_hub_known:
             u_hb, v_hb, w_hb = u, v, w
             if not zero_body_rates:
-                u_hb = u - q * lzh - sign * r * lyh
-                v_hb = v + p * lzh + r * lxh
-                w_hb = w + sign * p * lyh - q * lxh
+                # A-18 and A-19 use omega × (CG to hub) in forward/right/down axes.
+                u_hb = u + q * z - r * y_offset
+                v_hb = v + r * x - p * z
+                w_hb = w + p * y_offset - q * x
+        hub_known = body_hub_known and axes_known
+        if hub_known:
             hub_u = u_hb * cos_beta - sign * v_hb * sin_beta * sin_phi + w_hb * sin_beta * cos_phi
             hub_v = sign * v_hb * cos_phi + w_hb * sin_phi
             hub_w = -u_hb * sin_beta - sign * v_hb * cos_beta * sin_phi + w_hb * cos_beta * cos_phi
@@ -1414,7 +1518,7 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
                 if advance_ratio is None:
                     missing.append(f'{side} finite mast-plane advance ratio')
         forces_known = None not in (t, h, y)
-        if forces_known and None not in (density, omega, radius):
+        if source and forces_known and None not in (density, omega, radius):
             # A-38 uses shaft Omega, while A-20 uses angular-rate-corrected Omega prime.
             disk_area = math.pi * radius**2
             shaft_tip_speed = omega * radius
@@ -1424,8 +1528,15 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
             if force_coefficient is None:
                 missing.append(f'{side} finite rotor force coefficient')
         audit.update({f'{side}_{key}': value for key, value in (
-            ('cg_to_hub_x_m', lxh), ('cg_to_hub_y_m', None if lyh is None else sign * lyh),
-            ('cg_to_hub_z_m', None if lzh is None else -lzh),
+            ('beta_m_deg', mast_angle_deg),
+            ('beta_m_status', ('CALCULATED' if mast_angle_source else 'PROVIDED')
+             if mast_angle_deg is not None else 'UNAVAILABLE'),
+            ('beta_m_source', mast_angle_source or 'Supplied rotor mast angle'),
+            ('cg_to_hub_x_m', x), ('cg_to_hub_y_m', y_offset), ('cg_to_hub_z_m', z),
+            ('cg_to_hub_status', offset_status), ('cg_to_hub_source', source if offset_known else ''),
+            ('hub_u_body_mps', u_hb), ('hub_v_body_mps', v_hb), ('hub_w_body_mps', w_hb),
+            ('hub_velocity_body_status', calculated_status if body_hub_known else 'UNAVAILABLE'),
+            ('hub_velocity_body_source', 'NASA CR-166536 pp. A-18–A-19, V_hub = V_cg + body_rates × offset'),
             ('hub_u_mast_mps', hub_u), ('hub_v_mast_mps', hub_v), ('hub_w_mast_mps', hub_w),
             ('hub_velocity_status', calculated_status if hub_known else 'UNAVAILABLE'),
             ('hub_velocity_source', 'NASA CR-166536 pp. A-18–A-19'),
@@ -1452,6 +1563,13 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
         )})
         audit[f'mu_{side}'] = advance_ratio
         audit[f'c_rf_{side}'] = force_coefficient
+    geometry_known = 'UNAVAILABLE' not in geometry_statuses
+    audit.update(hub_geometry_status=' / '.join(dict.fromkeys(geometry_statuses)) if geometry_known else 'UNAVAILABLE',
+                 hub_geometry_source=source if geometry_known else '', hub_geometry_note='')
+    if not geometry_known:
+        effect = ('Zero body rates eliminate the hub-offset velocity terms.' if zero_body_rates else
+                  'Required for body-rate corrections to hub velocity and μ.')
+        audit['hub_geometry_note'] = f'Need {HUB_GEOMETRY_NEEDED}. {effect}'
     resolved = XV15RotorFlow(source, audit['c_rf_left'], audit['c_rf_right'], audit['mu_left'], audit['mu_right'],
                              inputs.assumptions)
     return resolved, audit, missing
@@ -1672,7 +1790,25 @@ def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=No
                            fuselage_alpha_status='CALCULATED FROM USER-PRESCRIBED PITCH')
         if density is not None and math.isfinite(density) and density >= 0:
             row['q_pa'] = .5 * density * speed**2
-    elif not nasa:
+    mast_angles = tuple(90 - angle if angle is not None and 0 <= angle <= 90 else None
+                        for angle in (rotor_input_number(state.left_nacelle_angle_deg),
+                                      rotor_input_number(state.right_nacelle_angle_deg)))
+    beta = mast_angles[0] if mast_angles[0] == mast_angles[1] else None
+    row.update(beta_m_deg=beta, beta_m_status='CALCULATED' if beta is not None else 'UNAVAILABLE',
+               beta_m_source='90° minus the common Phase 2 nacelle angle')
+    if rotor_flow is None:
+        rotor_flow = transition_rotor_inputs(state, aircraft)
+    rotor_missing = []
+    if isinstance(rotor_flow, XV15RotorInputs):
+        rotor_flow, input_audit, rotor_missing = calculate_xv15_rotor_flow(
+            rotor_flow, aircraft, beta, pitch, forward, up, density, rotor_mast_angles_deg=mast_angles,
+            mast_angle_source='90° minus the rotor nacelle angle in Phase 2')
+        row.update(input_audit)
+        row['rotor_flow_missing_inputs'] = ', '.join(rotor_missing)
+    else:
+        row['rotor_flow_input_note'] = 'Externally supplied C_RF and advance ratios; raw rotor inputs unavailable.'
+    row.update(transition_environment_audit(environment))
+    if invalid_flow_inputs and not nasa:
         row['aero_reason'] = f'{invalid_flow_inputs[0]} is missing or invalid'
         return row
     if polar is None:
@@ -1696,19 +1832,6 @@ def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=No
         temperature = rotor_input_number(environment.temperature)
         if speed is not None and temperature is not None and temperature > -273.15:
             row['mach'] = speed / math.sqrt(1.4 * 287.05 * (temperature + 273.15))
-        left, right = state.left_nacelle_angle_deg, state.right_nacelle_angle_deg
-        beta = 90 - left if left is not None and left == right and 0 <= left <= 90 else None
-        row.update(beta_m_deg=beta, beta_m_status='CALCULATED' if beta is not None else 'UNAVAILABLE',
-                   beta_m_source='90° minus the common Phase 2 nacelle angle')
-        if rotor_flow is None:
-            rotor_flow = transition_rotor_inputs(state, aircraft)
-        rotor_missing = []
-        if isinstance(rotor_flow, XV15RotorInputs):
-            rotor_flow, input_audit, rotor_missing = calculate_xv15_rotor_flow(
-                rotor_flow, aircraft, beta, pitch, forward, up, density)
-            row.update(input_audit)
-        else:
-            row['rotor_flow_input_note'] = 'Externally supplied C_RF and advance ratios. Raw rotor inputs were not provided.'
         correction, rotor_audit, correction_missing = polar.rotor_flow_correction(beta, rotor_flow)
         row.update(rotor_audit)
         illustrative = bool(rotor_flow.assumptions)
@@ -1802,9 +1925,30 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
                     heading_deg=heading_deg)
     result = dict(final_state=state, elapsed_s=0.0, requested_s=duration_s, rows=[], simplified=polar is None,
                   status='UNAVAILABLE', reason='')
+    coefficient_audit = transition_thrust_coefficient_audit(takeoff)
     if takeoff['motion']['takeoff_status'] != 'AIRBORNE' or state.height_agl_m <= 0:
         result['reason'] = (f"Phase 1 ended {takeoff['motion']['takeoff_status']}. "
                             f"{takeoff['motion']['reason']}")
+        preflight = dict(coefficient_audit, **transition_environment_audit(environment),
+                         audit_record='PREFLIGHT ONLY', phase2_time_s=None, simulation_time_s=state.elapsed_s,
+                         rotor_model=takeoff['rotor_model'], aircraft_transition_status='UNAVAILABLE',
+                         aero_status='UNAVAILABLE', aero_reason=result['reason'],
+                         heading_deg=heading_deg, pitch_attitude_deg=pitch_attitude_deg,
+                         pitch_attitude_status='USER-PRESCRIBED' if pitch_attitude_deg is not None else 'UNAVAILABLE',
+                         body_u_mps=None, body_v_mps=None, body_w_mps=None, body_velocity_status='NOT EVALUATED')
+        rpm = rotor_input_number(aircraft.hover_rotor_rpm, positive=True)
+        for side in ('left', 'right'):
+            preflight.update({f'{side}_{key}': value for key, value in (
+                ('thrust_n', takeoff[side]['value']),
+                ('rotor_rpm', rpm), ('rotor_rpm_status', 'XML-SOURCED / ACCEPTED' if rpm is not None else 'UNAVAILABLE'),
+                ('rotor_rpm_source', f'rotor.xml: {HOVER_RPM_XML_PATH}'),
+                ('hub_u_body_mps', None), ('hub_v_body_mps', None), ('hub_w_body_mps', None),
+                ('hub_u_mast_mps', None), ('hub_v_mast_mps', None), ('hub_w_mast_mps', None),
+                ('rotor_t_n', None), ('rotor_h_n', None), ('rotor_y_n', None),
+                ('hub_velocity_status', 'NOT EVALUATED'),
+            )})
+            preflight[f'mu_{side}'] = preflight[f'c_rf_{side}'] = None
+        result['preflight_audit'] = preflight
         return result
     starts = (state.left_nacelle_angle_deg, state.right_nacelle_angle_deg)
     mass = takeoff['takeoff_mass_kg']
@@ -1816,7 +1960,8 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
         angles = tuple(None if start is None else start + fraction * (end - start)
                        for start, end in zip(starts, (left_end, right_end)))
         state = replace(state, left_nacelle_angle_deg=angles[0], right_nacelle_angle_deg=angles[1])
-        row = dict(phase2_time_s=time, simulation_time_s=state.elapsed_s, height_agl_m=state.height_agl_m,
+        row = dict(coefficient_audit, audit_record='PHASE 2 EVALUATION',
+                   phase2_time_s=time, simulation_time_s=state.elapsed_s, height_agl_m=state.height_agl_m,
                    forward_distance_m=state.forward_distance_m, forward_velocity_mps=state.forward_velocity_mps,
                    vertical_velocity_mps=state.vertical_velocity_mps, mass_kg=mass,
                    aircraft_weight_n=None if mass is None else mass * G, rotor_model=takeoff['rotor_model'],
@@ -1835,13 +1980,8 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
                         f'{side}_rotor_status': rotor['status'],
                         f'{side}_rotor_reason': rotor['reason'],
                         f'{side}_rotor_calibration': rotor.get('source_status', rotor.get('calibration_status', 'UNAVAILABLE'))})
-        rotor_flow = None
-        if isinstance(polar, XV15WingPylonPolar):
-            if rotor_flow_provider is not None:
-                rotor_flow = rotor_flow_provider(state, environment)
-            else:
-                rotor_flow = transition_rotor_inputs(state, aircraft, illustrative=illustrative_rotor_flow,
-                                                     takeoff=takeoff)
+        rotor_flow = (rotor_flow_provider(state, environment) if rotor_flow_provider is not None else
+                      transition_rotor_inputs(state, aircraft, illustrative=illustrative_rotor_flow, takeoff=takeoff))
         row.update(transition_wing_forces(state, aircraft, environment, polar, rotor_flow=rotor_flow))
         rotors_known = all(vector is not None for vector in rotor_vectors)
         rotor_forward = sum(vector[0] for vector in rotor_vectors) if rotors_known else None
@@ -1957,6 +2097,8 @@ def report_timed_transition(result, audit_path=None):
     print(f"Phase 2 demonstration status: {status} — {result['reason']}")
     print(f"Phase 2 elapsed: {result['elapsed_s']:.6g} / {result['requested_s']:.6g} s")
     if not rows:
+        if 'preflight_audit' in result:
+            write_transition_audit([result['preflight_audit']], audit_path)
         return
 
     report_transition_checkpoints(rows)
@@ -2062,7 +2204,6 @@ def report_transition_checkpoints(rows):
     for source in dict.fromkeys(row['wing_alpha_source'] for row in checkpoints if row['wing_alpha_source']):
         print('Wing AoA method: ' + source)
     if nasa:
-        report_rotor_flow_inputs(rows[-1])
         for key, label in (
             ('rotor_flow_status', 'Rotor inputs for the NASA wing AoA correction'),
             ('rotor_flow_correction_status', 'Rotor-flow correction'),
@@ -2093,7 +2234,9 @@ def report_rotor_flow_inputs(row):
 
     def show(label, key, unit, places=3, *, status_key=None, source_key=None):
         raw = row.get(key)
-        value = '—' if raw is None else format_quantity(raw, unit, places=places)
+        value = '—'
+        if raw is not None:
+            value = f'{raw:.6g} {unit}' if unit == 'dimensionless' else format_quantity(raw, unit, places=places)
         status = row[status_key or key + '_status']
         source = row[source_key or key + '_source']
         print(f'  {label}  {value} | {status} | {source}')
@@ -2107,8 +2250,6 @@ def report_rotor_flow_inputs(row):
              status_key=f'body_{name}_status', source_key=f'body_{name}_source')
     show('Rotor radius', 'rotor_radius_m', 'm', status_key='rotor_radius_status',
          source_key='rotor_geometry_source')
-    show('Air density', 'air_density_kg_m3', 'kg/m³', status_key='air_density_status',
-         source_key='air_density_source')
     show('Lateral mast tilt', 'lateral_mast_tilt_deg', 'deg', status_key='lateral_mast_tilt_status',
          source_key='lateral_mast_tilt_source')
     geometry = f'  CG-to-hub geometry | {row["hub_geometry_status"]}'
@@ -2120,35 +2261,108 @@ def report_rotor_flow_inputs(row):
     if row['hub_geometry_xml_fields_inspected']:
         print('  XML fields inspected — ' + row['hub_geometry_xml_fields_inspected'])
     for side in ('left', 'right'):
+        offset = tuple(row[f'{side}_cg_to_hub_{axis}_m'] for axis in ('x', 'y', 'z'))
+        if None not in offset:
+            print(f'  {side.title()} CG-to-hub (forward/right/down)  {format_vector(offset, "m")}'
+                  f' | {row[f"{side}_cg_to_hub_status"]} | {row[f"{side}_cg_to_hub_source"]}')
+        show(f'{side.title()} mast angle β', f'{side}_beta_m_deg', 'deg',
+             status_key=f'{side}_beta_m_status', source_key=f'{side}_beta_m_source')
         show(f'{side.title()} rotor speed', f'{side}_rotor_rpm', 'rpm', places=0)
         show(f'{side.title()} shaft Ω', f'{side}_rotor_omega_rad_s', 'rad/s', places=4,
              status_key=f'{side}_rotor_omega_status', source_key=f'{side}_rotor_omega_source')
+        show(f'{side.title()} effective Ω′', f'{side}_rotor_omega_effective_rad_s', 'rad/s', places=4,
+             status_key=f'{side}_rotor_speed_status', source_key=f'{side}_rotor_omega_effective_source')
+        for frame, status_key in (('body', 'hub_velocity_body'), ('mast', 'hub_velocity')):
+            values = tuple(row[f'{side}_hub_{axis}_{frame}_mps'] for axis in ('u', 'v', 'w'))
+            velocity = '—' if None in values else format_vector(values, 'm/s')
+            print(f'  {side.title()} hub U/V/W ({frame})  {velocity} | {row[f"{side}_{status_key}_status"]}'
+                  f' | {row[f"{side}_{status_key}_source"]}')
         for name in ('t', 'h', 'y'):
             show(f'{side.title()} mast {name.upper()}', f'{side}_rotor_{name}_n', 'N',
                  status_key=f'{side}_rotor_{name}_status', source_key=f'{side}_rotor_{name}_source')
+        show(f'{side.title()} μ', f'mu_{side}', 'dimensionless',
+             status_key=f'{side}_advance_ratio_status', source_key=f'{side}_advance_ratio_source')
+        show(f'{side.title()} C_RF', f'c_rf_{side}', 'dimensionless',
+             status_key=f'{side}_force_coefficient_status', source_key=f'{side}_force_coefficient_source')
     # Raw external providers can document assumptions beyond the built-in ones shown above.
     if row.get('rotor_flow_assumptions') and row['body_rates_status'] != 'ASSUMED':
         print('Rotor-flow assumptions — ' + row['rotor_flow_assumptions'])
 
 
+def report_inputs_and_assumptions(transition):
+    print('\nINPUTS AND ASSUMPTIONS')
+    row = transition['rows'][-1] if transition['rows'] else transition['preflight_audit']
+    for field, key, value_key, unit in (
+        ('Air density', 'air_density', 'air_density_kg_m3', 'kg/m³'),
+        ('Wind speed', 'wind_speed', 'wind_speed_mps', 'm/s'),
+        ('Wind FROM', 'wind_from', 'wind_from_deg', 'deg true'),
+        ('Temperature', 'temperature', 'temperature_c', '°C'),
+    ):
+        value = format_quantity(row[value_key], unit, places=3)
+        print(f'  {field}  {value} | {row[f"{key}_status"]} | {row[f"{key}_source"]}')
+    for key, label, value in (
+        ('rotor_model', 'Rotor model', row['rotor_model']),
+        ('timestep', 'Integration timestep', f'{row["timestep_s"]:g} s' if 'timestep_s' in row else None),
+        ('transition_end', 'Nacelle targets L/R', row.get('transition_end_deg')),
+        ('transition_flaps', 'Wing flap/flaperon', row.get('transition_flaps_deg')),
+        ('collective_config', 'Collective configuration', row.get('left_rotor_configuration_source')),
+    ):
+        if row.get(f'{key}_status') == 'DEFAULTED' and value is not None:
+            print(f'  {label}  {value} | DEFAULTED | {row[f"{key}_source"]}')
+    pitch = row['pitch_attitude_deg']
+    print('  Phase 2 pitch  ' + ('— | UNAVAILABLE | --transition-pitch-deg'
+                                 if pitch is None else f'{pitch:g} deg | USER-PRESCRIBED | --transition-pitch-deg'))
+    for side in ('left', 'right'):
+        ct = row[f'{side}_thrust_coefficient']
+        value = '—' if ct is None else format(ct, '.6g')
+        print(f'  {side.title()} selected C_T  {value} | {row[f"{side}_ct_status"]}'
+              f' | {row[f"{side}_ct_data_kind"]} | {row[f"{side}_ct_source"] or row[f"{side}_ct_reason"]}')
+        if ct is None and row[f'{side}_ct_source']:
+            print('    ' + row[f'{side}_ct_reason'])
+        lower = row[f'{side}_ct_pitch_min_deg']
+        if lower is not None:
+            print(f'    Model bounds {lower:g} to {row[f"{side}_ct_pitch_max_deg"]:g} deg'
+                  f' | {row[f"{side}_ct_pitch_bounds_basis"]} | {row[f"{side}_ct_pitch_bounds_source"]}')
+    print('  Selected C_T application — ' + row['selected_ct_application'])
+    print(f'  CR-177436 hover C_T | {row["cr177436_hover_ct_status"]} | {row["cr177436_hover_ct_source"]}')
+    print('  ' + row['cr177436_hover_ct_coverage'])
+    print('  ' + row['cr177436_hover_ct_limitation'])
+    print('  ' + row['cr177436_hover_ct_data_kind'])
+    if transition['rows']:
+        report_rotor_flow_inputs(row)
+        if row.get('rotor_flow_missing_inputs'):
+            print('  Unavailable rotor inputs or results — ' + row['rotor_flow_missing_inputs'])
+    else:
+        print(f'  Heading  {row["heading_deg"]:g} deg true | {row.get("heading_status", "PRESCRIBED")}'
+              f' | {row.get("heading_source", "TMPE Phase 2 fixed heading")}')
+        speed = format_quantity(row['left_rotor_rpm'], 'rpm', places=0)
+        print(f'  Accepted rotor-speed input for both rotors  {speed} | {row["left_rotor_rpm_source"]}')
+        print('  Phase 2 rotor flow | NOT EVALUATED | ' + transition['reason'])
+
+
 def write_transition_audit(rows, audit_path):
     # Export-only ordering and rounding; retain full-precision simulation rows.
     numeric_groups = (
-        ('phase2_time_s', 'simulation_time_s', 'height_agl_m', 'forward_distance_m',
+        ('audit_record', 'phase2_time_s', 'simulation_time_s', 'height_agl_m', 'forward_distance_m',
          'forward_velocity_mps', 'vertical_velocity_mps', 'mass_kg', 'aircraft_weight_n'),
         ('left_nacelle_deg', 'right_nacelle_deg', 'left_thrust_n', 'right_thrust_n',
+         'left_collective_input_deg', 'right_collective_input_deg', 'left_thrust_coefficient',
+         'right_thrust_coefficient', 'left_cr177436_hover_ct', 'right_cr177436_hover_ct',
+         'left_cr177436_hover_thrust_n', 'right_cr177436_hover_thrust_n',
          'left_rotor_forward_n', 'left_rotor_up_n', 'right_rotor_forward_n', 'right_rotor_up_n',
          'total_rotor_forward_n', 'total_rotor_up_n'),
         ('wind_speed_mps', 'wind_from_deg', 'wind_forward_mps', 'wind_east_mps', 'wind_cross_plane_mps',
-         'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3'),
+         'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3', 'temperature_c'),
         ('heading_deg', 'pitch_attitude_deg', 'body_u_mps', 'body_v_mps', 'body_w_mps',
          'body_p_rad_s', 'body_q_rad_s', 'body_r_rad_s',
          'beta_m_deg', 'lateral_mast_tilt_deg', 'lxh_m', 'lyh_m', 'lzh_m', 'rotor_radius_m'),
-        ('left_cg_to_hub_x_m', 'left_cg_to_hub_y_m', 'left_cg_to_hub_z_m',
+        ('left_beta_m_deg', 'left_cg_to_hub_x_m', 'left_cg_to_hub_y_m', 'left_cg_to_hub_z_m',
+         'left_hub_u_body_mps', 'left_hub_v_body_mps', 'left_hub_w_body_mps',
          'left_hub_u_mast_mps', 'left_hub_v_mast_mps', 'left_hub_w_mast_mps',
          'left_rotor_rpm', 'left_rotor_omega_rad_s', 'left_rotor_omega_effective_rad_s',
          'left_rotor_t_n', 'left_rotor_h_n', 'left_rotor_y_n', 'c_rf_left', 'mu_left'),
-        ('right_cg_to_hub_x_m', 'right_cg_to_hub_y_m', 'right_cg_to_hub_z_m',
+        ('right_beta_m_deg', 'right_cg_to_hub_x_m', 'right_cg_to_hub_y_m', 'right_cg_to_hub_z_m',
+         'right_hub_u_body_mps', 'right_hub_v_body_mps', 'right_hub_w_body_mps',
          'right_hub_u_mast_mps', 'right_hub_v_mast_mps', 'right_hub_w_mast_mps',
          'right_rotor_rpm', 'right_rotor_omega_rad_s', 'right_rotor_omega_effective_rad_s',
          'right_rotor_t_n', 'right_rotor_h_n', 'right_rotor_y_n', 'c_rf_right', 'mu_right'),
@@ -2538,7 +2752,7 @@ def main(argv=None):
     parser.add_argument('--transition-duration', type=float, help='Phase 2 duration in seconds')
     parser.add_argument('--transition-pitch-deg', type=float, metavar='DEG',
                         help='nose-up-positive pitch for Phase 2 body-axis airflow and NASA wing AoA')
-    parser.add_argument('--transition-end', default='0:0', metavar='LEFT:RIGHT',
+    parser.add_argument('--transition-end', metavar='LEFT:RIGHT',
                         help='ending nacelle angles in degrees, default 0:0')
     wing_model = parser.add_mutually_exclusive_group()
     wing_model.add_argument('--transition-polar', type=Path, help='wing coefficient CSV with header alpha_deg,cl,cd')
@@ -2550,9 +2764,9 @@ def main(argv=None):
                         metavar='FLAP:FLAPERON', help='fixed NASA flap/flaperon pair in degrees (default 40:25)')
     parser.add_argument('--polar-source', help='source metadata for the supplied wing coefficient table')
     parser.add_argument('--transition-audit', type=Path, help='new CSV path; default output/stage2_audit_*.csv')
-    parser.add_argument('--dt', type=float, default=.1, help='integration timestep in seconds')
+    parser.add_argument('--dt', type=float, help='integration timestep in seconds (default 0.1)')
     parser.add_argument('--ideal-rated-hover', action='store_true', help='separate conditional lossless rated-power hover estimate; not XV-15 predictions')
-    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct', 'prototype-collective'), default='prototype-collective',
+    parser.add_argument('--rotor-model', choices=('unsupported', 'prototype-fixed-ct', 'prototype-collective'),
                         help='default: prototype-collective with pilot pitch; prototype-fixed-ct is available for regression testing')
     parser.add_argument('--prototype-ct', type=float, help='assumed CT override for both prototype rotors')
     parser.add_argument('--collective-config', type=Path, help='collective model JSON; default: data(v.2)/collective_model.json')
@@ -2560,6 +2774,22 @@ def main(argv=None):
     parser.add_argument('--nacelle-schedule', nargs='+', default=[],
                         metavar='LEFT:RIGHT', help='untimed illustrative angle pairs in degrees; provisional range 0–90')
     args = parser.parse_args(argv)
+    cli_audit = {}
+    for key, option, value in (
+        ('rotor_model', '--rotor-model', args.rotor_model),
+        ('transition_end', '--transition-end', args.transition_end),
+        ('timestep', '--dt', args.dt),
+    ):
+        cli_audit[f'{key}_status'] = 'DEFAULTED' if value is None else 'USER-PRESCRIBED'
+        cli_audit[f'{key}_source'] = f'TMPE CLI default for {option}' if value is None else option
+    if args.rotor_model is None:
+        args.rotor_model = 'prototype-collective'
+    if args.transition_end is None:
+        args.transition_end = '0:0'
+    if args.dt is None:
+        args.dt = .1
+    cli_audit.update(timestep_s=args.dt, transition_end_deg=args.transition_end,
+                     heading_status='DEFAULTED', heading_source='TMPE AircraftState default yaw (north)')
     try:
         angle_pairs = [tuple(map(float, pair.split(':'))) for pair in args.nacelle_schedule]
         end_angles = tuple(map(float, args.transition_end.split(':')))
@@ -2596,7 +2826,11 @@ def main(argv=None):
         except (OSError, ValueError, csv.Error) as exc:
             parser.error(f'Invalid transition polar: {exc}')
     elif not args.illustrative_transition:
-        flap_pair = tuple(map(float, (args.transition_flaps or '40:25').split(':')))
+        flap_setting = args.transition_flaps or '40:25'
+        flap_pair = tuple(map(float, flap_setting.split(':')))
+        cli_audit.update(transition_flaps_deg=flap_setting,
+                         transition_flaps_status='USER-PRESCRIBED' if args.transition_flaps else 'DEFAULTED',
+                         transition_flaps_source='--transition-flaps' if args.transition_flaps else 'TMPE CLI flap default')
         try:
             polar = XV15WingPylonPolar.load(flap_pair)
         except OSError as exc:
@@ -2608,42 +2842,20 @@ def main(argv=None):
     state = AircraftState()
     print("\nEnter ground-level environmental conditions.")
 
-    density = ask_float(
-        "Air density (kg/m^3)",
-        default=1.225,
-        minimum=0,
-        places=3
-    )
+    input_statuses = {}
 
-    windspeed = ask_float(
-        "Wind speed (m/s)",
-        default=5.0,
-        minimum=0
-    )
-
-    wind_direction = ask_float(
-        "Wind FROM direction (degrees clockwise from north)",
-        default=180.0,
-        places=1
-    )
-
-    temperature = ask_float(
-        "Temperature (degrees C)",
-        default=15.0,
-        places=1
-    )
-
-    altitude = ask_float(
-        "Ground elevation above sea level (m)",
-        default=0.0
-    )
+    def scenario_input(key, prompt, **options):
+        value, input_statuses[key] = ask_float(prompt, with_status=True, **options)
+        return value
 
     environment = Environment(
-        windspeed=windspeed,
-        winddirection=wind_direction,
-        air_density=density,
-        temperature=temperature,
-        altitude=altitude
+        air_density=scenario_input('air_density', 'Air density (kg/m^3)', default=1.225, minimum=0, places=3),
+        windspeed=scenario_input('windspeed', 'Wind speed (m/s)', default=5.0, minimum=0),
+        winddirection=scenario_input('winddirection', 'Wind FROM direction (degrees clockwise from north)',
+                                     default=180.0, places=1),
+        temperature=scenario_input('temperature', 'Temperature (degrees C)', default=15.0, places=1),
+        altitude=ask_float('Ground elevation above sea level (m)', default=0.0),
+        input_statuses=input_statuses,
     )
 
     collective_options = {}
@@ -2663,6 +2875,13 @@ def main(argv=None):
                     print('Please answer yes or no.')
             if args.allow_illustrative_collective:
                 model = LinearCollectiveModel.load(illustrative_path)
+        cli_audit.update(
+            collective_config_status=('USER-PRESCRIBED' if args.collective_config is not None else
+                                      'ILLUSTRATIVE OPT-IN' if args.allow_illustrative_collective else 'DEFAULTED'),
+            collective_config_source=('--collective-config' if args.collective_config is not None else
+                                      'TMPE bundled mathematical-test fixture' if args.allow_illustrative_collective else
+                                      'TMPE bundled collective_model.json'),
+        )
         pitches = {}
         for side in ('left', 'right'):
             while True:
@@ -2698,6 +2917,9 @@ def main(argv=None):
                                      pitch_attitude_deg=args.transition_pitch_deg,
                                      illustrative_rotor_flow=args.illustrative_rotor_flow,
                                      heading_deg=math.degrees(state.yaw))
+    audit_rows = transition['rows'] or [transition['preflight_audit']]
+    for row in audit_rows:
+        row.update(cli_audit)
     report_timed_transition(transition, args.transition_audit)
     report_final_state(transition, result)
     report_xv15_calculations(aircraft, result)
@@ -2721,6 +2943,7 @@ def main(argv=None):
         flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
         report_details(environment, aircraft, wing_aerodynamics(flow))
         report_aoa(state, aircraft, flow)
+    report_inputs_and_assumptions(transition)
 
 
 if __name__ == "__main__":

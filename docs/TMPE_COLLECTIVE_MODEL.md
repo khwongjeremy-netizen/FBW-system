@@ -11,6 +11,49 @@ are null. It never associates the existing fixed CT of 0.0102 with 10 degrees or
 other pitch. No fallback to the fixed coefficient occurs when collective is requested.
 The existing fixed-CT implementation remains available explicitly; the CLI now defaults to collective mode.
 
+## NASA hover-test reference
+
+NASA CR-177436 Figures 7.1–7.3 report hover tests of the full-scale 25 ft
+original metal-blade XV-15 rotor at the Ames Outdoor Aeronautical Research
+Facility. The isolated rotor ran on a horizontal test stand with 9.5 ft of
+blade-tip clearance from the ground. [NASA CR-177436, §3.1](https://ntrs.nasa.gov/api/citations/19880016983/downloads/19880016983.pdf#page=22)
+
+Fig. 7.1 relates thrust and power coefficients with power corrected
+to zero wind. Fig. 7.2 relates figure of merit to thrust coefficient. Fig. 7.3
+plots thrust coefficient against blade collective angle at 75% radius
+(`theta_75`, in degrees). That angle requires a matching pitch datum before
+using the plot with a TMPE collective input. The Advanced Technology Blade
+configurations are covered in later figures. [NASA CR-177436, pp. 50–54](https://ntrs.nasa.gov/api/citations/19880016983/downloads/19880016983.pdf#page=66)
+
+The symbol list defines `CT = T / (rho * pi * R**2 * V_tip**2)`. For this
+static rotor test, `V_tip = Omega * R`, where `Omega` is shaft angular speed.
+This gives the existing TMPE thrust equation
+`T = CT * rho * pi * R**2 * (Omega * R)**2` in SI units. `CP` uses shaft
+power and `V_tip**3`. The thrust coefficient alone supplies no in-plane mast
+forces. [NASA CR-177436, pp. xiii–xvi](https://ntrs.nasa.gov/api/citations/19880016983/downloads/19880016983.pdf#page=13)
+
+The Ames runs in Fig. 7.3 span 582.8–586.2 RPM and tip Mach 0.688–0.691.
+Their plotted collective angles retain the effect of ambient wind. The
+report estimates that a zero-wind correction would reduce collective by up
+to 1°. The authors consider the recorded Ames collective values suspect
+and use them solely to confirm the curve shape. The figure includes a
+separate Wright-Patterson whirl-tower comparison with points at 740 ft/s
+tip speed. Its collective angles are uncorrected for tower blockage. The
+report notes support for the tower values from calculations and flight-test
+experience and leaves the roughly 4° difference between datasets unexplained.
+[NASA CR-177436, pp. 53–54](https://ntrs.nasa.gov/api/citations/19880016983/downloads/19880016983.pdf#page=69)
+
+The fixed 565 RPM TMPE operating point is outside the Ames Fig. 7.3 run-speed
+range. The available project data also lack a verified pitch-datum match to
+`theta_75` and a test-condition match to the modeled installed rotor. The
+report-derived hover `CT` and its thrust estimate are therefore unavailable
+in the audit, and the shipped collective model remains uncalibrated. The
+figure supplies plotted points, so any future extraction should be identified
+as graph-digitized and restricted to the selected curve’s measured pitch
+interval and documented setup. Climb and nacelle transition fall outside
+the static-hover source coverage. Existing prototype coefficients retain
+their own model and provenance.
+
 ## Parameter evidence and missing data
 
 | Parameter | Repository state | Needed evidence |

@@ -47,11 +47,12 @@ stall and approximations above stall (pp. 26–27).
 
 - **Mast angle.** TMPE uses 90° for vertical nacelles and 0° for forward.
   The report's `beta_m` runs in the opposite direction, so
-  `beta_m_deg = 90 - nacelle_deg` (p. A-50). A single symmetric mast angle
-  is required. The report calls for interpolation between the endpoint mast
-  angles (p. 25). Both endpoint configurations must support the query for
-  an interior-angle interpolation. At an endpoint the lookup requires CL
-  and CD coverage at that angle.
+  `beta_m_deg = 90 - nacelle_deg` (p. A-50). Each rotor uses its own angle
+  for the hub transform. The NASA wing correction and coefficient lookup
+  require a common mast angle. The report calls for interpolation between
+  the endpoint mast angles (p. 25). Both endpoint configurations must
+  support the query for an interior-angle interpolation. At an endpoint the
+  lookup requires CL and CD coverage at that angle.
 - **Angle of attack.** TMPE calculates fuselage AoA as `alpha_F = pitch - gamma`.
   With no pitch input, fuselage AoA is unavailable on the NASA path. The
   freestream wing AoA subtracts the rotor-flow correction on NASA CR-166536
@@ -63,14 +64,22 @@ stall and approximations above stall (pp. 26–27).
   subtraction stays in radians. The resulting wing AoA is converted to
   degrees for the table lookup. This angle definition has no
   separate wing-incidence term.
-- **Rotor-flow inputs.** The Phase 2 provider runs at every evaluated NASA
-  lookup step. It applies the right and left hub velocity transforms of
-  pp. A-18–A-19 to body `U, V, W`, body rates, and CG-to-hub lever terms.
+- **Rotor-flow inputs.** Figure A1-1 (p. A-13) distinguishes mast axes from
+  wind-mast axes and shows the mirrored rotor conventions. At each NASA
+  lookup step, TMPE adds `(p, q, r) × CG_to_hub` to aircraft body
+  velocity to obtain each hub velocity in body axes. It then applies the
+  corresponding mast-axis transform from pp. A-18–A-19. The audit reports both
+  vectors and the input mast angles.
   It computes shaft speed as `Omega = RPM * 2*pi / 60` and corrects it
   for the body rates using p. A-16. Page A-20 uses that corrected speed
   `Omega_prime` for `mu = hypot(U_HM, V_HM) / (Omega_prime * R)`.
   Page A-38 uses the **unprimed shaft speed** for the force coefficient
   `C_RF = hypot(T, H, Y) / (rho * pi * Omega^2 * R^4)`.
+  The wake subsystem input list on p. A-35 includes corrected speed.
+  TMPE follows the explicit p. A-38 normalization for `C_RF`.
+  The rotor aerodynamic model's `C_T = T / DN` (Fig. A1-3, p. A-25)
+  instead uses `DN = rho * pi * Omega_prime^2 * R^4` (pp. A-15, A-20).
+  The planar model's zero body rates make the two speeds numerically equal.
   The arithmetic mean of left and right advance ratios is specified on
   p. A-70. Figure A4-2 covers the wake-immersed wing calculation.
   [NASA CR-166536, Appendix A](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
@@ -115,8 +124,11 @@ Python callers can pass `rotor_flow_provider(state, environment)` to
 `simulate_transition()`. Return a sourced `XV15RotorInputs` with signed
 body velocity in m/s, body rates in rad/s, lateral mast tilt in degrees,
 and a left and right `XV15RotorOperatingPoint` with RPM and forces in
-newtons. Provide the report's `LXH, LYH, LZH` in meters for the current
-mast angle or supply matched CG and right shaft-pivot datums and mast length
+newtons. For each rotor, `left_hub_offset_body_m` and
+`right_hub_offset_body_m` accept signed forward/right/down offsets from the
+aircraft CG at the current mast angle. The interface also accepts the
+report's mirrored `LXH, LYH, LZH` lever terms in meters for symmetric
+geometry, or matched CG and right shaft-pivot datums and mast length
 through `XV15RotorHubGeometry`. The hook also accepts previously resolved
 `XV15RotorFlow` values and identifies them as externally supplied in the audit.
 
@@ -191,18 +203,20 @@ performance map or establish a validated transition trajectory.
 The console shows both stage times and transition checkpoints. Use
 `--verbose` to print the equations. When
 Phase 2 advances no time, the final state is explicitly attributed to Phase 1.
-All evaluated rows are saved to a unique `output/stage2_audit_*.csv`
+Audit rows are saved to a unique `output/stage2_audit_*.csv`
 in the working directory. Use `--transition-audit` to choose a new file path.
 The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
 and aerodynamic provenance. It shows air-relative velocity, flight-path
-angle, pitch, and fuselage AoA. NASA rows also show body-axis velocity,
-body rates, hub geometry, mast-axis hub velocities, accepted RPM, shaft
-and corrected rotor speeds, `T, H, Y`, `C_RF`, and per-rotor and mean
-advance ratios. The same rows include the rotor correction, corrected wing
-AoA, missing inputs, sources, assumptions, and lookup status. Units appear
-in the column names where applicable. Blank numerical cells represent
-unavailable quantities. The console reports preflight blocks that occur
-before Phase 2 can evaluate a step.
+angle, pitch, and fuselage AoA. Evaluated rows with raw rotor inputs also show body-axis velocity,
+body rates, hub geometry, each rotor's mast angle, body- and mast-axis hub
+velocities, accepted RPM, shaft and corrected rotor speeds, `T, H, Y`,
+`C_RF`, and per-rotor and mean advance ratios. The audit distinguishes any
+coefficient from the selected TMPE rotor model from the CR-177436 hover
+estimate and records source coverage and applicability. Units appear in
+column names where applicable. Blank numerical cells indicate unavailable
+quantities. A blocked Phase 1 handoff produces a preflight-only audit record
+with the blocker and available inputs. The console ends with the inputs,
+assumptions and source limits that affected the calculation.
 
 ## Primary-source review
 
@@ -213,9 +227,13 @@ measured XV-15 transition data.
 | Report and locator | Applicable data | Why no runtime values were imported |
 | --- | --- | --- |
 | [NASA TM-86833](https://ntrs.nasa.gov/citations/19860005773), Fig. 17, Tables 2–3 and Appendix A | Full-scale original metal-blade rotor on a hover test stand, tip Mach 0.60–0.73. Table 2 defines `COLL` at 0.75 radius in degrees, `RPM` in rev/min, `RHO` in kg/m³ and thrust in N. Fig. 17 uses thrust coefficient divided by solidity. | The report supplies paired stand data. TMPE accepts a pilot pitch input with no established mapping to the actuator-derived blade datum, and its design RPM and entered density are scenario inputs. A matched run and a separate installed-rotor applicability model are needed before applying the data to takeoff. |
-| [NASA CR-177436](https://ntrs.nasa.gov/citations/19880016983), §7, Fig. 7.3 (printed p. 53), Figs. 7.13 and 7.32–7.33 | Distinct full-scale baseline metal and advanced technology blade (ATB) hover configurations. The report compares nondimensional thrust and power and identifies run-level RPM/tip Mach. | The authors flag the baseline metal-blade collective readings as suspect and use them to illustrate curve shape. The ATB data apply to a different blade system. |
+| [NASA CR-177436](https://ntrs.nasa.gov/citations/19880016983), §7.1 and Figs. 7.1–7.3 (printed pp. 50–54) | Original XV-15 metal blades on an outdoor hover stand at nominal tip Mach 0.69. Figs. 7.1 and 7.2 compare `C_T` with wind-corrected power coefficient and figure of merit, respectively. Fig. 7.3 compares `C_T` with collective at 0.75 radius, with OARF runs at 582.8–586.2 RPM and WPAFB comparison points at several tip speeds. | The authors flag the OARF pitch readings and use them to show curve shape. The two facilities differ by about 4° in reported pitch. The comparison points are plotted, and TMPE lacks a mapping from pilot input to the test pitch datum. The stand curves cover hover. ATB curves elsewhere in the report describe a different blade system. |
 | [NASA TM-81177](https://ntrs.nasa.gov/citations/19800015802), notation, Fig. 13, Table II and tunnel scale-data printout | Full-aircraft tunnel runs in helicopter, conversion and airplane configurations. Test configurations include changes to pylon and wing hardware. | TMPE has no ingested run map matching rotor-on/off configuration, flap/flaperon settings, tilt, airspeed, thrust and shaft power. Total tunnel loads require a consistent decomposition before use alongside separate rotor forces. |
 | [NASA CR-176970](https://ntrs.nasa.gov/citations/19860020297), Chapter 2, Tables 1 and 5, and Chapter 5 | Configuration-specific hover download estimates combining out-of-ground-effect hover data and representative wing tunnel data. Table 5 gives download relative to total aircraft thrust at a selected power setting across flap settings. | These hover results do not define wake download across nacelle angle and forward speed. No fixed hover download fraction was applied to takeoff or conversion. |
+
+TMPE leaves the CR-177436 hover estimate unavailable. The plotted axis
+limits are display limits. A numerical pitch-to-thrust relationship would
+need verified test points and applicable test conditions.
 
 The existing fixed-CT demonstration uses the illustrative `CT=0.0102`
 from `rotor.xml`, a 25 ft diameter and the XML design hover setting of
