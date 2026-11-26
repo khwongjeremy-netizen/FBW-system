@@ -999,6 +999,120 @@ class TransitionTests(unittest.TestCase):
                 tmpe.main(['--nacelle-schedule', value])
 
 
+class NASAFlowTransitionTests(unittest.TestCase):
+    def setUp(self):
+        self.aircraft = tmpe.Aircraft()
+        self.environment = tmpe.Environment(windspeed=5, winddirection=0)
+        self.takeoff = tmpe.simulate_takeoff(self.aircraft, self.environment, 1, .1,
+                                             rotor_model='prototype-fixed-ct')
+        self.polar = tmpe.XV15WingPylonPolar.load((0, 0))
+
+    def transition(self, **kwargs):
+        return tmpe.simulate_transition(self.takeoff, self.aircraft, self.environment,
+                                        self.polar, .2, .1, (90, 90), **kwargs)
+
+    def test_planar_flow_and_accepted_rpm_are_audited_with_force_blockers(self):
+        self.takeoff['motion']['vertical_velocity_mps'] = 1
+        self.environment.windspeed = math.hypot(5, 4)
+        self.environment.winddirection = math.degrees(math.atan2(4, 5))
+        result = self.transition(pitch_attitude_deg=10)
+        self.assertEqual(result['elapsed_s'], 0)
+        self.assertEqual(len(result['rows']), 1)
+        first = result['rows'][0]
+        pitch = math.radians(10)
+        u = 5 * math.cos(pitch) + math.sin(pitch)
+        w = 5 * math.sin(pitch) - math.cos(pitch)
+        omega = 565 * math.tau / 60
+        phi = math.radians(1)
+        for key, expected in (('wind_east_mps', -4), ('body_u_mps', u),
+                              ('body_v_mps', 0), ('body_w_mps', w),
+                              ('body_p_rad_s', 0), ('body_q_rad_s', 0), ('body_r_rad_s', 0),
+                              ('rotor_radius_m', 3.81)):
+            self.assertAlmostEqual(first[key], expected)
+        self.assertIsNone(first['net_forward_n'])
+        for key in ('lxh_m', 'lyh_m', 'lzh_m'):
+            self.assertIsNone(first[key])
+        for side in ('left', 'right'):
+            self.assertEqual(first[f'{side}_rotor_rpm'], 565)
+            self.assertAlmostEqual(first[f'{side}_rotor_omega_rad_s'], omega)
+            self.assertAlmostEqual(first[f'{side}_rotor_omega_effective_rad_s'], omega)
+            self.assertAlmostEqual(first[f'{side}_hub_u_mast_mps'], u)
+            self.assertAlmostEqual(first[f'{side}_hub_v_mast_mps'], w * math.sin(phi))
+            self.assertAlmostEqual(first[f'{side}_hub_w_mast_mps'], w * math.cos(phi))
+            self.assertAlmostEqual(first[f'mu_{side}'], math.hypot(u, w * math.sin(phi)) / (omega * 3.81))
+            self.assertEqual(first[f'{side}_rotor_t_n'], self.takeoff[f'{side}_proprotor_thrust_n'])
+            self.assertIsNone(first[f'{side}_rotor_h_n'])
+            self.assertIsNone(first[f'{side}_rotor_y_n'])
+            self.assertIsNone(first[f'c_rf_{side}'])
+            self.assertIn(f'{side} mast-axis H', result['reason'])
+            self.assertIn(f'{side} mast-axis Y', result['reason'])
+
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+            audit_path = Path(folder) / 'audit.csv'
+            tmpe.report_timed_transition(result, audit_path)
+            with audit_path.open(newline='') as stream:
+                row = next(csv.DictReader(stream))
+        self.assertIn('CALCULATED', row['body_u_status'])
+        self.assertIn('ASSUMED', row['body_v_status'])
+        self.assertIn('ASSUMED', row['body_rates_status'])
+        self.assertIn('UNAVAILABLE', row['hub_geometry_status'])
+        self.assertEqual(row['left_rotor_rpm_status'], 'XML-SOURCED / ACCEPTED')
+        self.assertIn('rotor.xml', row['left_rotor_rpm_source'])
+        self.assertAlmostEqual(float(row['mu_left']), first['mu_left'], delta=1e-5)
+
+        eastbound = self.transition(pitch_attitude_deg=10, heading_deg=90)['rows'][0]
+        self.assertAlmostEqual(eastbound['air_forward_mps'], 4)
+        self.assertAlmostEqual(eastbound['body_u_mps'], 4 * math.cos(pitch) + math.sin(pitch))
+        self.assertAlmostEqual(eastbound['body_w_mps'], 4 * math.sin(pitch) - math.cos(pitch))
+
+    def test_missing_pitch_leaves_projected_velocity_and_advance_ratio_blank(self):
+        first = self.transition()['rows'][0]
+        for key in ('pitch_attitude_deg', 'body_u_mps', 'body_w_mps', 'mu_left', 'mu_right'):
+            self.assertIsNone(first[key])
+        self.assertEqual(first['body_v_mps'], 0)
+        self.assertIn('--transition-pitch-deg', first['aero_reason'])
+
+    def test_illustrative_flow_advances_only_with_wing_table_coverage(self):
+        result = self.transition(pitch_attitude_deg=10, illustrative_rotor_flow=True)
+        self.assertEqual(result['status'], 'CALCULATED')
+        self.assertEqual(result['elapsed_s'], .2)
+        first = result['rows'][0]
+        self.assertEqual(first['left_rotor_h_n'], 0)
+        self.assertEqual(first['right_rotor_y_n'], 0)
+        self.assertIn('ASSUMED', first['left_rotor_h_status'])
+        self.assertIn('ASSUMED', first['right_rotor_y_status'])
+        self.assertIsNotNone(first['lift_n'])
+        self.assertEqual(first['aero_validation'], 'UNVALIDATED')
+
+        self.environment.windspeed = 200
+        no_coverage = self.transition(pitch_attitude_deg=10, illustrative_rotor_flow=True)
+        self.assertEqual(no_coverage['elapsed_s'], 0)
+        self.assertIsNotNone(no_coverage['rows'][0]['wing_alpha_deg'])
+        self.assertIsNone(no_coverage['rows'][0]['cl'])
+        self.assertIsNone(no_coverage['rows'][0]['net_up_n'])
+
+        self.assertIsNotNone(self.polar.evaluate(60, 0, .05)[0])
+        self.assertIsNone(self.polar.evaluate(60, 4, .05)[0])
+
+    def test_complete_mast_force_components_feed_wing_correction(self):
+        left = tmpe.XV15RotorOperatingPoint(565, 30000, 3000, -4000)
+        right = tmpe.XV15RotorOperatingPoint(565, 31000, -5000, 2000)
+        inputs = tmpe.XV15RotorInputs('Synthetic force and flow test', body_velocity_mps=(5, 0, 0),
+                                      body_rates_rad_s=(0, 0, 0), lateral_mast_tilt_deg=1,
+                                      left=left, right=right)
+        result = self.transition(pitch_attitude_deg=10, rotor_flow_provider=lambda *_: inputs)
+        first = result['rows'][0]
+        radius = 3.81
+        tip_speed = (565 * math.tau / 60) * radius
+        denominator = self.environment.air_density * math.pi * radius**2 * tip_speed**2
+        coefficients = [math.hypot(point.t_n, point.h_n, point.y_n) / denominator for point in (left, right)]
+        self.assertAlmostEqual(first['c_rf_left'], coefficients[0])
+        self.assertAlmostEqual(first['c_rf_right'], coefficients[1])
+        correction = .26 * .0806 * sum(coefficients) / .15**2
+        self.assertAlmostEqual(first['rotor_flow_correction_rad'], correction)
+        self.assertAlmostEqual(first['wing_alpha_rad'], first['fuselage_alpha_rad'] - correction)
+
+
 class TimedTransitionTests(unittest.TestCase):
     def polar(self, content='alpha_deg,cl,cd\n-180,0.5,0.25\n180,0.5,0.25\n', source=None):
         with tempfile.TemporaryDirectory() as directory:
