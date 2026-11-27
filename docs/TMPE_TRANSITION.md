@@ -135,58 +135,82 @@ through `XV15RotorHubGeometry`. The hook also accepts previously resolved
 
 ### NASA rotor in-plane forces
 
-Each rotor's wind azimuth is `xi = atan2(V_HM, U_HM)` in radians from
-its local mast-plane hub velocities (pp. A-17–A-20). The left mast-plane
-transform and mast-rate equations carry their own signs before the azimuth
-rotation. The air-relative velocity already accounts for aircraft heading
-and the entered wind. A missing or zero mast-plane velocity leaves `xi`
-unavailable. The latest tracked audit uses the north-facing setup, 5 m/s wind
-from 180°, 90° nacelles, and no prescribed Phase 2 pitch. Both hub-plane
-velocities and azimuths are unavailable for that run.
-[NASA CR-166536, Appendix A](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166) ·
-[Latest tracked audit](../output/stage2_audit_a_yhotbm.csv)
+The simplified run holds the `rotor.xml` design hover speed of 565 rpm
+through Phase 2 and labels it `XML-SOURCED / HELD FIXED`. `Omega` is the
+shaft speed in rad/s. Appendix A p. A-16 uses body rates and each rotor's
+mast angle to obtain effective speed `Omega_prime`. The planar model
+assumes zero body rates and lateral body velocity. The hub transform on
+pp. A-18–A-19 applies the left and right signs in their local frames. With
+nonzero rates, the hub velocity also requires a sourced CG-to-hub offset.
+[NASA CR-166536, Appendix A](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
 
-TMPE divides each rotor's wind-mast angular rates by `Omega_prime` and
-calculates the axial hub contribution `lambda_0 = -W_HM / (Omega_prime * R)`.
-The supplied induced ratio forms `lambda = lambda_0 + lambda_i` (Fig. A1-3).
-Page A-21 rotates the supplied local mast-axis cyclic angles into wind-mast
-axes. The wind-mast force scale is
-`Q6 = 0.5 * sigma * a * rho * pi * R**2 * (Omega_prime * R)**2` in newtons.
-Section 9 starts `H_bar` on printed p. A-30 and continues with `Y_bar`
-on p. A-31. Section 10 uses these two components and the same rotor's
-azimuth to rotate into mast axes.
-[NASA CR-166536, pp. A-16–A-31](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
+The effective tip speed `Omega_prime * R` normalizes wind-mast rates,
+advance ratio `mu = hypot(U_HM, V_HM) / (Omega_prime * R)`, and axial inflow
+`lambda_0 = -W_HM / (Omega_prime * R)`. The wind azimuth is
+`xi = atan2(V_HM, U_HM)` in radians for nonzero mast-plane speed. If that
+speed is zero, `mu` is zero when the effective tip speed is available, and
+`xi` stays blank because the flow has no in-plane direction. Page A-21
+rotates the supplied local `A1` and `B1` cyclic angles using `xi`.
+[NASA CR-166536, pp. A-16–A-21](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
+
+Tip Mach uses CG airspeed `V_T` and shaft tip speed `Omega * R`, per
+p. A-21. The temperature-based sound speed uses `sqrt(1.4 * 287.05 * T_K)`
+in m/s for calorically perfect dry air, with `T_K = T_C + 273.15`.
+[NASA CR-166536, p. A-21](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf) ·
+[NASA Glenn, Speed of Sound](https://www.grc.nasa.gov/www/BGH/sound.html)
+
+```text
+M_TIP = sqrt(V_T² + (Omega * R)² + 2 * V_T * Omega * R * cos(beta_m)) / sound_speed
+DN    = rho * pi * R² * (Omega_prime * R)²
+a_R   = (a0 + mu * (a1 - a2 * mu)) / sqrt(1 - (0.75 * M_TIP)² * sin(beta_m))
+Q6    = 0.5 * sigma * a_R * DN
+```
+
+`DN` and `Q6` are in newtons. Both use effective speed. Section 9 on
+pp. A-30–A-31 evaluates the separate wind-mast forces `H_bar` and `Y_bar`.
+Section 10 on p. A-31 resolves them into mast axes at that rotor's azimuth.
+[NASA CR-166536, pp. A-20–A-31](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
 
 ```text
 H = H_bar * cos(xi) + Y_bar * sin(xi)
 Y = -H_bar * sin(xi) + Y_bar * cos(xi)
 ```
 
-Set `XV15RotorOperatingPoint.in_plane_state` to a sourced
-`XV15InPlaneState` for each rotor with operating data. Include any input
-assumptions in that state. The remaining inputs come from the existing
-rotor-flow calculation or the aircraft XML.
+Each rotated force requires only the intermediate terms with nonzero
+rotation coefficients. For example, an exact `xi = 0` permits `Y` from
+`Y_bar` even with `H_bar` unavailable. TMPE records a supplied
+`h_lambda_coefficient` as an unverified candidate and keeps `H_bar` blank.
+A legible p. A-30 scan is needed to identify the coefficient multiplying
+`lambda * (3/2 * a_bar1 - p_hat)`. A provider can supply `H` and `Y`
+independently with provenance. `--illustrative-rotor-flow` explicitly
+assumes both are zero. The resultant `C_RF` requires `T`, `H`, `Y`, density,
+radius, and shaft RPM (p. A-38). Thrust-dependent calculations from
+illustrative or assumed thrust carry an illustrative, unvalidated status.
+[NASA CR-166536, pp. A-30–A-31, A-38](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166536_882.pdf#page=166)
 
-| Required input and units | Source and availability |
+Attach a sourced `XV15InPlaneState` to `XV15RotorOperatingPoint.in_plane_state`
+for each rotor. Provide the input citations in `source` and describe any
+assumptions in `assumptions`. Existing sourced operating values take precedence
+over values derived from raw inputs.
+
+| Operating value | Provider fields and dependencies |
 | --- | --- |
-| `R` (m), `sigma` (dimensionless), `tan(delta3)` (dimensionless) | In `rotor.xml`, `rotor_diameter` is 25 ft, `rotor_blades_per_hub` is 3, `blade_chord` is 14 in, and `pitch_flap_coupling_angle` is −15°. TMPE converts the radius to 3.81 m and the chord to 0.3556 m, computes `sigma = n_b * chord / (pi * R)` (about 0.08913), and takes the tangent of the coupling angle in radians. |
-| `rho` (kg/m³), `Omega_prime R` (m/s), `mu`, `lambda_0`, `p_hat`, `q_hat` (dimensionless) | Density is an environment input. Rotor RPM, mast angles, air-relative hub velocities, and body rates come from the existing model or provider. The built-in planar path assumes zero lateral body velocity and body rates, and excludes cross-plane wind. Verified CG-to-hub offsets are required when body-rate corrections depend on them. |
-| Effective blade lift slope `a` (per radian), blade-pitch coefficients `CS0`, `CS1`, `CS2`, `CC1`, `CC2` (dimensionless), effective profile drag factor `Cdf` (dimensionless) | Supply operating values through `XV15InPlaneState` (pp. A-14–A-22). The project has overall blade twist and unverified endpoints. Deriving the pitch coefficients requires the blade station and twist distribution, the applicable zero-lift angle, and the rotor's root collective. The wing-pylon tables describe wing loads. |
-| Coefficient of the `H_bar` term multiplying `lambda * (3/2 * a_bar1 - p_hat)` (dimensionless) | The indexed scan leaves the coefficient subscript ambiguous on p. A-30. Supply a checked value as `h_lambda_coefficient`. |
-| Induced inflow ratio `lambda_i` and inflow distribution factor `K` (dimensionless) | Supply operating values through `XV15InPlaneState` (Fig. A1-3 and p. A-29). Mast-axis hub velocity `W_HM` supplies the axial contribution. The bundled rotor model has no induced-inflow state. |
-| Operating coning `a0`, wind-mast flapping `a_bar1` and `b_bar1`, and local mast-axis cyclic `A1` and `B1` (rad) | Supply per-rotor operating values through `XV15InPlaneState` (pp. A-21–A-28). The XML precone of 2.5° and mechanical flapping limit of ±12° describe configuration and travel. The pilot collective command supplies neither cyclic angle. |
+| Effective lift slope `a_R` and force scale `Q6` | Supply `lift_slope_per_rad` or the report's average lift coefficients `blade_lift_a0`, `blade_lift_a1`, and `blade_lift_a2`. The derivation also needs `mu`, `M_TIP`, and the mast angle. `Q6` needs the selected slope, `DN`, and geometric solidity. |
+| Blade-pitch constants `CSn` and `CCn` | Supply the required operating constants or `root_collective_rad` and each sourced `twist_terms_n0` through `twist_terms_n3` tuple as `(TW1n, TW2n, TW3n, TW4n)`. Root collective uses the report's datum. The CLI pilot collective has no verified root-collective mapping. |
+| Profile drag factor `Cdf` | Supply `profile_drag_factor` or all three `blade_drag_delta*` values and `cdmax`, `cdalph`, `cdlim`, `cdmach`, and `cdfact`. The p. A-22 calculation also uses `M_TIP`, blade count, and `alpha_r = 7 * (T / DN) / (sigma * a_R)`. |
+| Operating coning angle | Supply `coning_rad` or `blade_flapping_inertia_kg_m2` and `coning_hub_spring_nm_per_rad` for the coning spring `K_HUB`. The p. A-22 equation uses the configuration precone, per-rotor thrust, blade count, radius, and effective `Omega_prime`. A provider can supply `precone_rad` in place of the 2.5° XML precone. The report's `TW34` is 34.525° and is recorded in radians. |
+| Induced inflow `lambda_i` | Supply `induced_inflow` or all five Fig. A1-3 factors `tip_loss_factor` (`B`), `ground_effect_factor` (`G`), `washout` (`WASHOUT`), `side_by_side_factor` (`X_SS`), and `tandem_factor` (`X_SF`). With `T`, `DN`, `mu`, and `lambda_0` available, the p. A-24 inner iteration uses held thrust and records its iteration count and convergence status. Total inflow is `lambda_0 + lambda_i`. Supply the operating `inflow_distribution` (`K`) separately for H/Y. |
+| Wind-mast flapping `a_bar1`, `b_bar1` | Supply both current angles in `longitudinal_flap_rad` and `lateral_flap_rad`, or provide `flapping_c_matrix` (N m s/rad) and `flapping_a_matrix` (N m/rad) as four row-major entries each, `flapping_forcing_nm` as the matched-control `(B1, B2)` pair, `flapping_prior_rad`, and a positive `flapping_step_s`. TMPE applies a backward Euler step with the supplied terms held fixed for that step. Supply the local cyclic angles in `lateral_cyclic_mast_rad` and `longitudinal_cyclic_mast_rad` for the force formulas. |
 
-The companion XV-15 input deck lists static twist stations, blade-pitch,
-lift and drag parameters, and inflow-distribution constants. These are
-references for deriving the operating quantities above. The current
-bundled run leaves those operating inputs unavailable.
-[NASA CR-166535, Appendix I, pp. I-2–I-4](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166535_881.pdf)
-
-An explicitly supplied mast-axis `H`/`Y` pair retains its provenance.
-The explicit illustrative option provides an assumed zero pair. Otherwise
-the NASA path supplies a complete calculated pair when its inputs are
-available. The selected pair can enter `C_RF` with the separately modeled
-`T` and the p. A-38 normalization.
+The XV-15 companion input decks list candidate twist stations, lift and
+drag coefficients, stiffnesses, and inflow parameters. Appendix I and
+Appendix J report different `a2` signs, and the operating configuration
+must match before selecting the deck. Candidate blade-performance and
+inflow parameters require an explicit source-backed match.
+Default CLI runs report unavailable `H_bar`, `Y_bar`, `H`, `Y`, and `C_RF`
+when the operating inputs are missing. The wide audit gives the individual
+missing dependencies, with force results and status in the rotor CSV.
+[NASA CR-166535, Appendices I and J](https://rotorcraft.arc.nasa.gov/Publications/files/CR-166535_881.pdf)
 
 ### Alternate coefficient inputs
 

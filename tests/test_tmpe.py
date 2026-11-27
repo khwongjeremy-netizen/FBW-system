@@ -1024,6 +1024,8 @@ class NASAFlowTransitionTests(unittest.TestCase):
         w = 5 * math.sin(pitch) - math.cos(pitch)
         omega = 565 * math.tau / 60
         phi = math.radians(1)
+        sound_speed = math.sqrt(1.4 * 287.05 * (self.environment.temperature + 273.15))
+        tip_speed = omega * 3.81
         for key, expected in (('wind_east_mps', -4), ('body_u_mps', u),
                               ('body_v_mps', 0), ('body_w_mps', w),
                               ('body_p_rad_s', 0), ('body_q_rad_s', 0), ('body_r_rad_s', 0),
@@ -1036,6 +1038,10 @@ class NASAFlowTransitionTests(unittest.TestCase):
             self.assertEqual(first[f'{side}_rotor_rpm'], 565)
             self.assertAlmostEqual(first[f'{side}_rotor_omega_rad_s'], omega)
             self.assertAlmostEqual(first[f'{side}_rotor_omega_effective_rad_s'], omega)
+            self.assertAlmostEqual(first[f'{side}_rotor_tip_mach'], (tip_speed + math.hypot(5, 1)) / sound_speed)
+            self.assertAlmostEqual(first[f'{side}_in_plane_dn_n'], 1.225 * math.pi * 3.81**2 * tip_speed**2)
+            self.assertIn('ILLUSTRATIVE', first[f'{side}_in_plane_cr166536_ct_status'])
+            self.assertIsNone(first[f'{side}_in_plane_q6_n'])
             self.assertAlmostEqual(first[f'{side}_hub_u_mast_mps'], u)
             self.assertAlmostEqual(first[f'{side}_hub_v_mast_mps'], w * math.sin(phi))
             self.assertAlmostEqual(first[f'{side}_hub_w_mast_mps'], w * math.cos(phi))
@@ -1056,7 +1062,7 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertIn('ASSUMED', row['body_v_status'])
         self.assertIn('ASSUMED', row['body_rates_status'])
         self.assertIn('UNAVAILABLE', row['hub_geometry_status'])
-        self.assertEqual(row['left_rotor_rpm_status'], 'XML-SOURCED / ACCEPTED')
+        self.assertEqual(row['left_rotor_rpm_status'], 'XML-SOURCED / HELD FIXED')
         self.assertIn('rotor.xml', row['left_rotor_rpm_source'])
         self.assertAlmostEqual(float(row['mu_left']), first['mu_left'], delta=1e-5)
 
@@ -1157,7 +1163,81 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(row['mu_left'], 0)
         self.assertAlmostEqual(row['left_in_plane_lambda_zero'], 2 / (omega * 3.81))
 
-    def test_in_plane_coefficients_and_side_specific_rotation_feed_c_rf(self):
+    def test_induced_inflow_requires_every_factor_and_audits_convergence(self):
+        state = tmpe.XV15InPlaneState(
+            source='Synthetic inflow fixture', tip_loss_factor=.9, ground_effect_factor=.8,
+            washout=.25, side_by_side_factor=.05,
+        )
+        thrust, dn, mu, lambda_zero = 20, 1000, .18, .04
+
+        def evaluate(operating_state):
+            derived, audit = {}, dict(in_plane_dn_n=dn)
+            tmpe.resolve_xv15_induced_inflow(operating_state, derived, audit, thrust=thrust, mu=mu,
+                                           lambda_zero=lambda_zero, force_status='CALCULATED')
+            return derived, audit
+
+        derived, audit = evaluate(state)
+        self.assertNotIn('induced_inflow', derived)
+        self.assertIsNone(audit['in_plane_induced_iteration_count'])
+        self.assertIn('X_SF', audit['in_plane_tandem_factor_reason'])
+
+        derived, audit = evaluate(tmpe.replace(state, tandem_factor=0))
+        self.assertEqual(audit['in_plane_tandem_factor'], 0)
+        self.assertEqual(audit['in_plane_induced_convergence_status'], 'CONVERGED')
+        self.assertGreater(audit['in_plane_induced_iteration_count'], 0)
+        inflow = derived['induced_inflow']
+        total = lambda_zero + inflow
+        q3 = thrust / (2 * state.tip_loss_factor**2 * dn)
+        q5 = .6 * q3**1.5 / (q3 + 8 * mu**2)
+        denominator = (math.sqrt(mu**2 + .866 * total**2) + q5 * (q3 + (8 / 3) * total**2) /
+                       (q3 + 8 * total**2))
+        ground_multiplier = 1 - (1 - state.ground_effect_factor) * state.washout
+        expected = q3 * ground_multiplier * (1 + state.side_by_side_factor) / denominator
+        self.assertAlmostEqual(inflow, expected, delta=.0001 + .001 * abs(inflow))
+
+    def test_flapping_step_uses_sourced_prior_and_matches_frozen_matrix(self):
+        state = tmpe.XV15InPlaneState(
+            source='Synthetic flapping fixture', flapping_c_matrix=(2, -1, 1, 3),
+            flapping_a_matrix=(4, 2, -2, 3), flapping_forcing_nm=(.75, 4.875),
+            flapping_prior_rad=(.125, -.25), flapping_step_s=.25,
+        )
+        derived, audit = {}, {}
+        tmpe.resolve_xv15_flapping(tmpe.replace(state, flapping_prior_rad=None), derived, audit,
+                                  force_status='CALCULATED')
+        self.assertEqual(derived, {})
+        self.assertIn('prior_a_bar1', audit['in_plane_integrated_a_bar1_rad_reason'])
+
+        derived, audit = {}, {}
+        tmpe.resolve_xv15_flapping(state, derived, audit, force_status='CALCULATED')
+        # (C + dt A) @ (.25, .125) equals C @ (.125, -.25) + dt B.
+        self.assertEqual(derived['longitudinal_flap_rad'], .25)
+        self.assertEqual(derived['lateral_flap_rad'], .125)
+        self.assertEqual(audit['in_plane_integrated_a_bar1_rad_status'], 'CALCULATED')
+        self.assertIn('Synthetic flapping fixture', audit['in_plane_prior_a_bar1_source'])
+
+    def test_blade_performance_requires_matching_inputs_and_uses_effective_speed(self):
+        state = tmpe.XV15InPlaneState(
+            source='Synthetic Appendix A equation fixture', blade_lift_a0=5, blade_lift_a1=2, blade_lift_a2=1,
+            root_collective_rad=0, twist_terms_n1=(.1, .2, .3, .4), blade_flapping_inertia_kg_m2=100,
+            coning_hub_spring_nm_per_rad=12_000,
+        )
+        derived, audit = tmpe.calculate_xv15_blade_performance(
+            state, mu=.2, tip_mach=.6, mast_angle_deg=30, density=1.2, radius=4, tip_speed=200,
+            solidity=.09, blade_count=3, thrust_n=30_000, omega_effective=50,
+            precone_rad=.04, precone_source='Synthetic precone fixture',
+        )
+        expected_slope = (5 + .2 * (2 - .2)) / math.sqrt(1 - (.75 * .6)**2 * .5)
+        self.assertAlmostEqual(derived['lift_slope_per_rad'], expected_slope)
+        self.assertAlmostEqual(audit['in_plane_q6_n'], .5 * .09 * expected_slope * audit['in_plane_dn_n'])
+        self.assertAlmostEqual(derived['cs1'], .6)
+        self.assertAlmostEqual(derived['cc1'], -.2)
+        self.assertEqual(audit['in_plane_precone_rad'], .04)
+        self.assertAlmostEqual(derived['coning_rad'], (.75 * 4 * (30_000 / 3) + 12_000 * .04) /
+                               (100 * 50**2 + 12_000))
+        self.assertIsNone(audit['in_plane_derived_cdf'])
+        self.assertIn('delta_2', audit['in_plane_blade_cd_reason'])
+
+    def test_in_plane_rotation_uses_only_nonzero_terms_and_preserves_supplied_forces(self):
         state = tmpe.XV15InPlaneState(
             source='Synthetic software test in NASA local rotor coordinates', lift_slope_per_rad=5,
             cs0=0, cs1=0, cs2=.4, cc1=.2, cc2=0, h_lambda_coefficient=.3, profile_drag_factor=.05,
@@ -1168,8 +1248,7 @@ class NASAFlowTransitionTests(unittest.TestCase):
         point = tmpe.XV15RotorOperatingPoint(565, 123, in_plane_state=state)
         inputs = tmpe.XV15RotorInputs('Synthetic rotor kinematics', body_velocity_mps=(0, 4, -2),
                                       body_rates_rad_s=(0, 0, 0), lateral_mast_tilt_deg=0, left=point, right=point)
-        _, row, missing = tmpe.calculate_xv15_rotor_flow(inputs, self.aircraft, 0, None, None, None, 1.225)
-        self.assertEqual(missing, [])
+        _, row, _ = tmpe.calculate_xv15_rotor_flow(inputs, self.aircraft, 0, None, None, None, 1.225)
         radius = 3.81
         tip_speed = 565 * math.tau / 60 * radius
         denominator = 1.225 * math.pi * radius**2 * tip_speed**2
@@ -1177,25 +1256,29 @@ class NASAFlowTransitionTests(unittest.TestCase):
         scale = .5 * solidity * 5 * denominator
         inflow = .1 + 2 / tip_speed
         coupling = math.tan(math.radians(-15))
-        expected_h_bar = scale * (.08 - .09 * inflow
-                                  + .05 * math.hypot(1, 4 * inflow / 3) * 16 / (3 * tip_speed)
-                                  + coupling * (.03 * inflow + (8 / 75) * inflow**2))
         expected_y_bar = scale * (.4 * (.3 - 2 * .2 / 3) - .2 * inflow * 1.5 * (.3 - 8 * .2 / 9)
                                   - coupling * (.02 * inflow + (16 / 225) * inflow**2))
         for side, sign in (('left', -1), ('right', 1)):
-            self.assertAlmostEqual(row[f'{side}_rotor_h_bar_n'], expected_h_bar)
+            self.assertIsNone(row[f'{side}_rotor_h_bar_n'])
             self.assertAlmostEqual(row[f'{side}_rotor_y_bar_n'], expected_y_bar)
             self.assertAlmostEqual(row[f'{side}_rotor_h_n'], sign * expected_y_bar)
-            self.assertAlmostEqual(row[f'{side}_rotor_y_n'], -sign * expected_h_bar)
+            self.assertIsNone(row[f'{side}_rotor_y_n'])
             self.assertEqual(row[f'{side}_rotor_t_n'], 123)
-            self.assertAlmostEqual(row[f'c_rf_{side}'], math.hypot(123, expected_h_bar, expected_y_bar) / denominator)
+            self.assertIsNone(row[f'c_rf_{side}'])
+            self.assertIn('A-30', row[f'{side}_rotor_h_bar_n_reason'])
 
-        uncertain = tmpe.replace(state, h_lambda_coefficient=None)
-        inputs = tmpe.replace(inputs, left=tmpe.replace(point, in_plane_state=uncertain))
-        _, row, _ = tmpe.calculate_xv15_rotor_flow(inputs, self.aircraft, 0, None, None, None, 1.225)
-        self.assertIn('verified coefficient of the H-bar lambda', row['left_nasa_in_plane_missing_inputs'])
-        self.assertIsNone(row['left_rotor_h_bar_n'])
-        self.assertAlmostEqual(row['left_rotor_y_bar_n'], expected_y_bar)
+        supplied = tmpe.replace(point, h_n=0, in_plane_force_source='Synthetic supplied H fixture')
+        aligned = tmpe.replace(inputs, body_velocity_mps=(4, 0, -2), left=supplied, right=supplied)
+        _, row, missing = tmpe.calculate_xv15_rotor_flow(aligned, self.aircraft, 0, None, None, None, 1.225)
+        self.assertEqual(missing, [])
+        self.assertEqual(row['left_rotor_h_n'], 0)
+        self.assertEqual(row['left_rotor_h_source'], 'Synthetic supplied H fixture')
+        self.assertAlmostEqual(row['left_rotor_y_n'], expected_y_bar)
+        self.assertAlmostEqual(row['c_rf_left'], math.hypot(123, expected_y_bar) / denominator)
+
+        near_aligned = tmpe.replace(aligned, body_velocity_mps=(4, 1e-8, -2))
+        _, row, _ = tmpe.calculate_xv15_rotor_flow(near_aligned, self.aircraft, 0, None, None, None, 1.225)
+        self.assertIsNone(row['left_rotor_y_n'])
         self.assertIsNone(row['c_rf_left'])
 
     def test_cli_preflight_audit_records_default_provenance_and_blank_hover_ct(self):
@@ -1204,7 +1287,8 @@ class NASAFlowTransitionTests(unittest.TestCase):
             audit_path = Path(folder) / 'preflight.csv'
             with patch('builtins.input', side_effect=['', '5', '', '', '', '', '15', '15']):
                 with contextlib.redirect_stdout(output):
-                    tmpe.main(['--duration', '1', '--transition-duration', '1', '--transition-audit', str(audit_path)])
+                    tmpe.main(['--verbose', '--duration', '1', '--transition-duration', '1',
+                               '--transition-audit', str(audit_path)])
             with audit_path.open(newline='') as stream:
                 row, = csv.DictReader(stream)
         self.assertEqual(row['audit_record'], 'PREFLIGHT ONLY')
@@ -1212,6 +1296,7 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(row['wind_speed_status'], 'USER-PRESCRIBED')
         self.assertEqual(row['rotor_model_status'], 'DEFAULTED')
         self.assertEqual(row['left_rotor_rpm'], '565')
+        self.assertEqual(row['left_rotor_rpm_status'], 'XML-SOURCED / HELD FIXED')
         self.assertEqual(row['left_collective_input_deg'], '15')
         self.assertEqual(row['left_thrust_coefficient'], '')
         self.assertEqual(row['left_cr177436_hover_ct'], '')

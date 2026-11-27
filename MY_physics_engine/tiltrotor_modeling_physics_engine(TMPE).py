@@ -41,6 +41,9 @@ G = 9.80665
 ROTOR_DIAMETER_XML_PATH = 'proprotor_and_drive_system/rotor_diameter'
 HOVER_RPM_XML_PATH = "proprotor_and_drive_system/design_rotor_speed[@mode='hover']"
 ROTOR_DELTA3_XML_PATH = 'proprotor_and_drive_system/pitch_flap_coupling_angle'
+ROTOR_PRECONE_XML_PATH = 'proprotor_and_drive_system/hub_precone_angle'
+HELD_HOVER_RPM_STATUS = 'XML-SOURCED / HELD FIXED'
+SOUND_SPEED_SOURCE = 'NASA Glenn Speed of Sound: https://www.grc.nasa.gov/www/BGH/snddrv.html'
 
 
 
@@ -264,6 +267,7 @@ class Aircraft:
             ('rotor_disk_area_ft2', 'rotor.xml', 'proprotor_and_drive_system/rotor_disc_area_per_rotor', 'ft^2', 'Per-rotor disk area'),
             ('blade_chord_ft', 'rotor.xml', 'proprotor_and_drive_system/blade_chord', 'ft', 'Blade chord converted from inches'),
             ('rotor_delta3_deg', 'rotor.xml', ROTOR_DELTA3_XML_PATH, 'deg', 'Signed pitch-flap coupling angle delta3'),
+            ('rotor_precone_deg', 'rotor.xml', ROTOR_PRECONE_XML_PATH, 'deg', 'Built-in hub precone angle'),
             ('hover_download_fraction', 'rotor.xml', 'proprotor_and_drive_system/wing_download/fraction', '1', 'Provisional OGE hover download fraction'),
             ('hover_drive_engine_limit_shp', 'rotor.xml', 'proprotor_and_drive_system/hover_takeoff_drive_limits/engine_power_limit', 'SHP', 'Per-side installed takeoff engine power reference'),
         ):
@@ -1171,9 +1175,8 @@ class XV15InPlaneState:
     """Sourced per-rotor inputs at the evaluated operating point.
 
     Use local rotor conventions for cyclic controls and wind-mast flapping.
-    Angles are radians, lift slope is per radian, and the other values are
-    dimensionless. Supply the A-30 lambda-term coefficient only after
-    checking its symbol against the report.
+    Angles are radians. The legacy H-bar coefficient field is audited as a
+    candidate pending verification of the A-30 symbol.
     """
 
     source: str = ''
@@ -1193,6 +1196,37 @@ class XV15InPlaneState:
     lateral_flap_rad: float | None = None
     lateral_cyclic_mast_rad: float | None = None
     longitudinal_cyclic_mast_rad: float | None = None
+    # Optional Appendix A raw inputs. Each twist tuple is (TW1n, TW2n, TW3n, TW4n).
+    blade_lift_a0: float | None = None
+    blade_lift_a1: float | None = None
+    blade_lift_a2: float | None = None
+    root_collective_rad: float | None = None
+    twist_terms_n0: tuple | None = None
+    twist_terms_n1: tuple | None = None
+    twist_terms_n2: tuple | None = None
+    twist_terms_n3: tuple | None = None
+    blade_drag_delta0: float | None = None
+    blade_drag_delta1_per_rad: float | None = None
+    blade_drag_delta2_per_rad2: float | None = None
+    cdmax: float | None = None
+    cdalph: float | None = None
+    cdlim: float | None = None
+    cdmach: float | None = None
+    cdfact: float | None = None
+    blade_flapping_inertia_kg_m2: float | None = None
+    coning_hub_spring_nm_per_rad: float | None = None
+    precone_rad: float | None = None
+    tip_loss_factor: float | None = None
+    ground_effect_factor: float | None = None
+    washout: float | None = None
+    side_by_side_factor: float | None = None
+    tandem_factor: float | None = None
+    # A-22 wind-mast flapping matrices (row-major), forcing, and prior a-bar1/b-bar1 in SI.
+    flapping_c_matrix: tuple | None = None
+    flapping_a_matrix: tuple | None = None
+    flapping_forcing_nm: tuple | None = None
+    flapping_prior_rad: tuple | None = None
+    flapping_step_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1265,6 +1299,7 @@ class XV15RotorInputs:
 
 
 ILLUSTRATIVE_ROTOR_FLOW = 'ILLUSTRATIVE / UNVALIDATED'
+ILLUSTRATIVE_CALCULATION = 'CALCULATED / ' + ILLUSTRATIVE_ROTOR_FLOW
 XV15_LATERAL_MAST_TILT_DEG = 1.0
 XV15_MAST_TILT_SOURCE = 'NASA CR-166535 Appendix I p. I-2 (XV-15 PHIM)'
 PLANAR_V_SOURCE = 'TMPE Phase 2 planar model omits cross-plane flow and lateral motion'
@@ -1284,6 +1319,8 @@ HUB_GEOMETRY_NEEDED = (
 WIND_MAST_AZIMUTH_SOURCE = 'NASA CR-166536 pp. A-17–A-20, atan2(V_HM, U_HM) in the local rotor frame'
 WIND_MAST_FORCE_SOURCE = 'NASA CR-166536 pp. A-30–A-31, Section 9'
 MAST_FORCE_ROTATION_SOURCE = 'NASA CR-166536 p. A-31, Section 10'
+H_BAR_BLOCKER = ('Legible NASA CR-166536 p. A-30 scan required to verify the coefficient of '
+                 'the H-bar term λ × (3/2 a-bar1 − p-hat)')
 IN_PLANE_STATE_FIELDS = (
     ('lift_slope_per_rad', 'effective blade lift slope a', 'p. A-20'),
     ('cs0', 'blade-pitch constant CS0', 'p. A-21'),
@@ -1291,7 +1328,6 @@ IN_PLANE_STATE_FIELDS = (
     ('cs2', 'blade-pitch constant CS2', 'p. A-21'),
     ('cc1', 'blade-pitch constant CC1', 'p. A-21'),
     ('cc2', 'blade-pitch constant CC2', 'p. A-21'),
-    ('h_lambda_coefficient', 'verified coefficient of the H-bar lambda times (3/2 a-bar1 − p-hat) term', 'p. A-30'),
     ('profile_drag_factor', 'effective profile drag factor Cdf', 'p. A-22'),
     ('induced_inflow', 'induced inflow ratio lambda_i', 'Fig. A1-3, pp. A-24–A-25'),
     ('inflow_distribution', 'inflow distribution factor K', 'p. A-29'),
@@ -1382,12 +1418,15 @@ def transition_rotor_inputs(state, aircraft, *, illustrative=False, takeoff=None
     def operating_point(side, thrust_n):
         phase1 = takeoff[side] if takeoff is not None else {}
         thrust_source = phase1.get('source') or phase1.get('reason')
+        provenance = phase1.get('source_status') or phase1.get('calibration_status') or ''
+        t_status = (ILLUSTRATIVE_CALCULATION if 'ILLUSTRATIVE' in provenance or phase1.get('ct_status') == 'ASSUMED'
+                    else 'CALCULATED')
         return XV15RotorOperatingPoint(
             aircraft.hover_rotor_rpm, thrust_n, in_plane_force, in_plane_force,
-            rpm_source=f'rotor.xml: {HOVER_RPM_XML_PATH} (held constant)',
-            rpm_status='XML-SOURCED / ACCEPTED',
+            rpm_source=f'rotor.xml: {HOVER_RPM_XML_PATH} (design hover rpm held through Phase 2)',
+            rpm_status=HELD_HOVER_RPM_STATUS,
             t_source='Held Phase 1 axial thrust' + (f' ({thrust_source})' if thrust_source else ''),
-            t_status='CALCULATED',
+            t_status=t_status,
             in_plane_force_source=in_plane_source, in_plane_force_status='ASSUMED',
         )
 
@@ -1422,17 +1461,195 @@ def rotor_solidity(blades, chord_m, radius_m):
     return None
 
 
-def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
-                                  tip_speed, radius, density, solidity, delta3_tan):
-    """Evaluate CR-166536 Section 9 from sourced operating inputs, then rotate by Section 10."""
+def speed_of_sound_mps(temperature_c):
+    """Calorically perfect dry air. Input degrees Celsius, output m/s."""
+    temperature_c = rotor_input_number(temperature_c)
+    if temperature_c is not None and temperature_c > -273.15:
+        return rotor_input_number(math.sqrt(1.4 * 287.05 * (temperature_c + 273.15)), positive=True)
+    return None
+
+
+def calculate_xv15_blade_performance(state, *, mu, tip_mach, mast_angle_deg, density, radius, tip_speed,
+                                    solidity, blade_count, thrust_n, omega_effective, precone_rad,
+                                    precone_source):
+    """Evaluate the A-20–A-22 operating values in SI from sourced inputs."""
     state = state if state is not None else XV15InPlaneState()
     source = state.source.strip() if isinstance(state.source, str) else ''
     audit = {}
+    derived = {}
+    density, radius, tip_speed, solidity, blade_count, omega_effective = (
+        rotor_input_number(value, positive=True)
+        for value in (density, radius, tip_speed, solidity, blade_count, omega_effective)
+    )
+    mu, tip_mach, mast_angle_deg, thrust_n = map(rotor_input_number, (mu, tip_mach, mast_angle_deg, thrust_n))
+    mu = mu if mu is not None and mu >= 0 else None
+    tip_mach = tip_mach if tip_mach is not None and tip_mach >= 0 else None
+    mast_angle_deg = mast_angle_deg if mast_angle_deg is not None and 0 <= mast_angle_deg <= 90 else None
 
-    def record(key, value, equation, *, status='CALCULATED', input_source=''):
+    def record(key, value, units, basis, reason='', status='CALCULATED'):
+        key = f'in_plane_{key}'
+        audit[key] = value
+        audit[f'{key}_units'] = units
+        audit[f'{key}_status'] = status if value is not None else 'UNAVAILABLE'
+        audit[f'{key}_source'] = basis
+        audit[f'{key}_reason'] = reason if value is None else ''
+        return value
+
+    def supplied(key, value, units, page, *, positive=False, nonnegative=False):
+        number = rotor_input_number(value, positive=positive)
+        if nonnegative and number is not None and number < 0:
+            number = None
+        basis = f'NASA CR-166536 {page}' + (f' | {source}' if source else '')
+        reason = f'Requires a finite sourced {key}' if number is None else f'Requires provenance for {key}'
+        return record(key, number if source else None, units, basis, reason,
+                      'PROVIDED / ASSUMPTIONS' if state.assumptions else 'PROVIDED')
+
+    def calculate(key, units, equation, inputs, formula, *, positive=False, nonnegative=False,
+                  invalid='Formula result is nonfinite or outside its domain'):
+        missing = ', '.join(label for label, value in inputs if value is None)
+        value = None
+        if not missing:
+            try:
+                value = rotor_input_number(formula(*(value for _, value in inputs)), positive=positive)
+            except ArithmeticError:
+                pass
+        if nonnegative and value is not None and value < 0:
+            value = None
+        return record(key, value, units, f'NASA CR-166536 {equation}',
+                      f'Missing or invalid: {missing}' if missing else invalid)
+
+    def select(field, calculated, *, positive=False, nonnegative=False):
+        provided = rotor_input_number(getattr(state, field), positive=positive) if source else None
+        if nonnegative and provided is not None and provided < 0:
+            provided = None
+        if provided is not None:
+            return provided
+        if calculated is not None:
+            derived[field] = calculated
+        return calculated
+
+    # A-15 and A-20: DN' = pi R^4, DN = rho Omega-prime^2 DN'.
+    dn = calculate('dn_n', 'N', 'pp. A-15, A-20, DN = rho pi R^2 (Omega prime R)^2',
+                   (('air density rho', density), ('rotor radius R', radius), ('effective tip speed', tip_speed)),
+                   lambda rho, r, speed: rho * math.pi * r * r * speed * speed, positive=True)
+    lift_coefficients = tuple(
+        (f'sourced blade lift a{n}', supplied(f'blade_lift_a{n}', getattr(state, f'blade_lift_a{n}'),
+                                             '1/rad', 'pp. A-9, A-20'))
+        for n in range(3)
+    )
+
+    def effective_lift_slope(a0, a1, a2, advance_ratio, mach, beta_deg):
+        # A-20 places sin(beta_m) outside the squared Mach term.
+        mach_at_75_percent = .75 * mach
+        radicand = 1 - mach_at_75_percent * mach_at_75_percent * math.sin(math.radians(beta_deg))
+        if radicand > 0:
+            return (a0 + advance_ratio * (a1 - a2 * advance_ratio)) / math.sqrt(radicand)
+        return None
+
+    calculated_lift = calculate('derived_lift_slope_per_rad', '1/rad', 'p. A-20, effective lift slope a_R',
+                                (*lift_coefficients, ('advance ratio mu', mu), ('tip Mach', tip_mach),
+                                 ('mast angle beta_m', mast_angle_deg)), effective_lift_slope, positive=True,
+                                invalid='Compressibility radicand and effective lift slope must be finite and positive')
+    lift_slope = select('lift_slope_per_rad', calculated_lift, positive=True)
+    # A-21: Q6 = sigma a_R DN / 2. Fig. A1-3 uses T / DN for its C_T.
+    calculate('q6_n', 'N', 'p. A-21, Q6 = sigma a_R DN / 2',
+              (('solidity sigma', solidity), ('effective lift slope a_R', lift_slope), ('DN', dn)),
+              lambda sigma, slope, force: .5 * sigma * slope * force, positive=True)
+    ct = calculate('cr166536_ct', '1', 'Fig. A1-3, p. A-24, C_T = T / DN',
+                   (('axial thrust T', thrust_n), ('DN', dn)), lambda thrust, force: thrust / force)
+    alpha_r = calculate('blade_alpha_r_rad', 'rad', 'p. A-21, alpha_r = 7 C_T / (sigma a_R)',
+                        (('CR-166536 C_T', ct), ('solidity sigma', solidity), ('effective lift slope a_R', lift_slope)),
+                        lambda coefficient, sigma, slope: 7 * coefficient / (sigma * slope))
+
+    theta = supplied('root_collective_rad', state.root_collective_rad, 'rad', 'pp. A-7, A-21')
+    for n in range(4):
+        terms = getattr(state, f'twist_terms_n{n}')
+        if not isinstance(terms, (tuple, list)) or len(terms) != 4:
+            terms = (None,) * 4
+        twist_inputs = tuple((f'TW{index}_{n}', supplied(f'tw{index}_{n}', value, '1', 'pp. A-14–A-15'))
+                             for index, value in enumerate(terms, 1))
+        pitch_inputs = (*twist_inputs, ('root collective theta_0', theta))
+        # A-21: compute CSn and CCn from the four twist-integral terms and root pitch.
+        cs = calculate(f'derived_cs{n}', '1', 'p. A-21, blade-pitch constant CSn', pitch_inputs,
+                       lambda tw1, tw2, tw3, tw4, collective: ((tw1 - tw3) * math.sin(collective)
+                                                              + (tw2 + tw4) * math.cos(collective)))
+        if n < 3:
+            select(f'cs{n}', cs)
+        cc = calculate(f'derived_cc{n}', '1', 'p. A-21, blade-pitch constant CCn', pitch_inputs,
+                       lambda tw1, tw2, tw3, tw4, collective: (-(tw2 + tw4) * math.sin(collective)
+                                                              + (tw1 - tw3) * math.cos(collective)))
+        if n in (1, 2):
+            select(f'cc{n}', cc)
+
+    drag_coefficients = tuple(
+        (label, supplied(field, getattr(state, field), units, 'pp. A-9, A-22', nonnegative=field == 'cdmax'))
+        for field, label, units in (
+            ('blade_drag_delta0', 'blade drag delta_0', '1'),
+            ('blade_drag_delta1_per_rad', 'blade drag delta_1', '1/rad'),
+            ('blade_drag_delta2_per_rad2', 'blade drag delta_2', '1/rad^2'),
+            ('cdmax', 'CDMAX', '1'), ('cdalph', 'CDALPH', '1'), ('cdlim', 'CDLIM', '1'),
+            ('cdmach', 'CDMACH', '1'), ('cdfact', 'CDFACT', '1'),
+        )
+    )
+
+    def blade_drag(delta0, delta1, delta2, cdmax, cdalph, cdlim, cdmach, cdfact, alpha, mach):
+        # A-22: the Mach contribution uses the printed plus signs and CDMAX caps Cd.
+        correction = cdalph * alpha + cdfact * (cdlim + max(mach, cdmach))
+        correction = rotor_input_number(correction)
+        if correction is not None:
+            raw_drag = rotor_input_number(delta0 + alpha * (delta1 + alpha * delta2) + max(0, correction))
+            if raw_drag is not None:
+                return min(cdmax, raw_drag)
+        return None
+
+    cd = calculate('blade_cd', '1', 'p. A-22, blade drag Cd',
+                   (*drag_coefficients, ('blade alpha_r', alpha_r), ('tip Mach', tip_mach)),
+                   blade_drag, nonnegative=True)
+    cdf = calculate('derived_cdf', '1', 'p. A-22, Cdf = Cd / (n_b a_R)',
+                    (('blade drag Cd', cd), ('blade count n_b', blade_count), ('effective lift slope a_R', lift_slope)),
+                    lambda drag, blades, slope: drag / (blades * slope), nonnegative=True)
+    select('profile_drag_factor', cdf, nonnegative=True)
+
+    inertia = supplied('blade_flapping_inertia_kg_m2', state.blade_flapping_inertia_kg_m2, 'kg m^2',
+                       'pp. A-8, A-22', positive=True)
+    spring = supplied('coning_hub_spring_nm_per_rad', state.coning_hub_spring_nm_per_rad, 'N m/rad',
+                      'pp. A-8, A-22', nonnegative=True)
+    explicit_precone = rotor_input_number(state.precone_rad) if source else None
+    if explicit_precone is not None:
+        precone = supplied('precone_rad', explicit_precone, 'rad', 'pp. A-9, A-22')
+    else:
+        precone = rotor_input_number(precone_rad) if precone_source else None
+        record('precone_rad', precone, 'rad', precone_source or 'NASA CR-166536 pp. A-9, A-22',
+               'Requires a sourced precone angle', 'XML-SOURCED')
+    record('tw34_rad', math.radians(34.525), 'rad',
+           'NASA CR-166536 p. A-22, XV-15 TW34 34.525 deg converted to rad', status='NASA-SOURCED')
+    # A-22: coning uses effective (primed) rotor speed and the coning spring K_HUB.
+    coning = calculate('derived_coning_rad', 'rad', 'p. A-22, operating coning a_0',
+                       (('rotor radius R', radius), ('axial thrust T', thrust_n), ('blade count n_b', blade_count),
+                        ('blade flapping inertia I_b', inertia), ('coning hub spring K_HUB', spring),
+                        ('precone angle', precone), ('effective angular speed Omega prime', omega_effective)),
+                       lambda r, thrust, blades, ib, khub, pre, omega: (
+                           (.75 * r * (thrust / blades) + khub * pre) / (ib * omega * omega + khub)))
+    select('coning_rad', coning)
+    return derived, audit
+
+
+def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
+                                  tip_speed, radius, density, solidity, delta3_tan,
+                                  derived=None, derivation_audit=None, force_status='CALCULATED'):
+    """Evaluate CR-166536 Section 9 from sourced operating inputs, then rotate by Section 10."""
+    state = state if state is not None else XV15InPlaneState()
+    source = state.source.strip() if isinstance(state.source, str) else ''
+    audit = dict(derivation_audit or {})
+    derived = derived or {}
+    xi = rotor_input_number(xi)
+
+    def record(key, value, equation, *, status='CALCULATED', input_source='', units='1', reason=''):
         audit[key] = value
         audit[f'{key}_status'] = status if value is not None else 'UNAVAILABLE'
         audit[f'{key}_source'] = equation + (f' | {input_source}' if input_source else '')
+        audit[f'{key}_units'] = units
+        audit[f'{key}_reason'] = reason if value is None else ''
 
     values = {}
     missing = []
@@ -1440,15 +1657,19 @@ def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
         value = rotor_input_number(getattr(state, key), positive=(key == 'lift_slope_per_rad'))
         if key == 'profile_drag_factor' and value is not None and value < 0:
             value = None
-        values[key] = value if source else None
-        record(f'in_plane_{key}', values[key], f'NASA CR-166536 {page}',
-               status='PROVIDED / ASSUMPTIONS' if state.assumptions else 'PROVIDED', input_source=source)
+        from_state = source and value is not None
+        values[key] = value if from_state else derived.get(key)
+        reason = label if value is None else f'source for {label}'
+        record(f'in_plane_{key}', values[key], f'NASA CR-166536 {page}', input_source=source,
+               status=('PROVIDED / ASSUMPTIONS' if state.assumptions else 'PROVIDED') if from_state else force_status,
+               units='rad' if key.endswith('_rad') else '1/rad' if key.endswith('_per_rad') else '1',
+               reason=f'Missing or invalid: {reason}')
         if values[key] is None:
-            missing.append(label if value is None else f'source for {label}')
+            missing.append(reason)
 
-    q6 = None
+    q6 = audit.get('in_plane_q6_n')
     lift_slope = values['lift_slope_per_rad']
-    if None not in (density, radius, tip_speed, solidity, lift_slope):
+    if 'in_plane_q6_n' not in audit and None not in (density, radius, tip_speed, solidity, lift_slope):
         # A-20/21: DN = rho pi R² (Omega-prime R)² and Q6 = sigma a DN / 2.
         q6 = rotor_input_number(.5 * solidity * lift_slope * density * math.pi * radius**2 * tip_speed**2,
                                 positive=True)
@@ -1460,13 +1681,16 @@ def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
         b = values['longitudinal_cyclic_mast_rad']
         cyclic_a = rotor_input_number(a * math.cos(xi) - b * math.sin(xi))
         cyclic_b = rotor_input_number(a * math.sin(xi) + b * math.cos(xi))
-    for key, value, page in (
-        ('in_plane_q6_n', q6, 'pp. A-20–A-21'),
-        ('in_plane_total_inflow', inflow, 'Fig. A1-3, p. A-24, lambda = lambda_0 + lambda_i'),
-        ('in_plane_lateral_cyclic_wind_rad', cyclic_a, 'p. A-21'),
-        ('in_plane_longitudinal_cyclic_wind_rad', cyclic_b, 'p. A-21'),
+    for key, value, page, units, reason in (
+        ('in_plane_q6_n', q6, 'pp. A-20–A-21', 'N', 'Requires density, radius, effective tip speed, solidity and lift slope'),
+        ('in_plane_total_inflow', inflow, 'Fig. A1-3, p. A-24, lambda = lambda_0 + lambda_i', '1',
+         'Requires axial and induced inflow ratios'),
+        ('in_plane_lateral_cyclic_wind_rad', cyclic_a, 'p. A-21', 'rad', 'Requires A1, B1 and wind azimuth'),
+        ('in_plane_longitudinal_cyclic_wind_rad', cyclic_b, 'p. A-21', 'rad', 'Requires A1, B1 and wind azimuth'),
     ):
-        record(key, value, f'NASA CR-166536 {page}')
+        if key not in audit:
+            record(key, value, f'NASA CR-166536 {page}', units=units, reason=reason,
+                   status=force_status if key == 'in_plane_total_inflow' else 'CALCULATED')
     missing.extend(label for value, label in (
         (xi, 'wind azimuth xi from a nonzero mast-plane hub velocity'),
         (mu, 'mast-plane advance ratio mu'),
@@ -1483,32 +1707,34 @@ def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
         (cyclic_a, 'wind-mast lateral cyclic A-bar1'),
         (cyclic_b, 'wind-mast longitudinal cyclic B-bar1'),
     ) if value is None)
-    h_bar = y_bar = h = y = None
+    # A-30 Section 9: the lambda-term subscript cannot be established from indexed text.
+    # A supplied candidate is visible in the audit and cannot enter the formula.
+    h_bar = y_bar = None
+    candidate = rotor_input_number(state.h_lambda_coefficient) if source else None
+    record('in_plane_h_lambda_coefficient', None, 'NASA CR-166536 p. A-30, Section 9', reason=H_BAR_BLOCKER)
+    record('in_plane_h_lambda_coefficient_candidate', candidate, 'NASA CR-166536 p. A-30, Section 9',
+           status='UNVERIFIED / NOT USED', input_source=source, reason=H_BAR_BLOCKER)
+    audit['in_plane_h_lambda_coefficient_candidate_reason'] = H_BAR_BLOCKER
+    missing.append(H_BAR_BLOCKER)
     cs0, cs1, cs2, cc1, cc2 = (values[key] for key in ('cs0', 'cs1', 'cs2', 'cc1', 'cc2'))
     coning = values['coning_rad']
     flap_a = values['longitudinal_flap_rad']
     flap_b = values['lateral_flap_rad']
     distribution = values['inflow_distribution']
     drag = values['profile_drag_factor']
-    h_lambda_coefficient = values['h_lambda_coefficient']
-    if None not in (q6, mu, inflow, induced, p_hat, q_hat, delta3_tan, cyclic_a, cyclic_b,
-                    cs0, cs1, cs2, cc1, cc2, coning, flap_a, flap_b, distribution, drag):
+    y_bar_dependencies = (
+        (q6, 'Q6'), (mu, 'μ'), (inflow, 'λ'), (induced, 'λ_i'), (p_hat, 'p-hat'), (q_hat, 'q-hat'),
+        (delta3_tan, 'tan(δ3)'), (cyclic_a, 'A-bar1'), (cyclic_b, 'B-bar1'),
+        (cs0, 'CS0'), (cs1, 'CS1'), (cs2, 'CS2'), (cc1, 'CC1'), (cc2, 'CC2'),
+        (coning, 'operating coning'), (flap_a, 'a-bar1'), (flap_b, 'b-bar1'),
+        (distribution, 'inflow distribution K'), (drag, 'Cdf'),
+    )
+    y_bar_missing = [label for value, label in y_bar_dependencies if value is None]
+    if not y_bar_missing:
         induced_skew = distribution * induced
         cyclic_inflow = (cc1 * inflow + cs0 * inflow * inflow) / 2
         cyclic_coning = (cc2 + cs1 * inflow) * coning / 2
         profile_drag = drag * math.hypot(1, 4 * inflow / 3)
-        if h_lambda_coefficient is not None:
-            # A-30 Section 9. The indexed source does not resolve the third term's coefficient subscript.
-            h_bar = rotor_input_number(q6 * (
-                cs0 * mu * inflow / 2 + cs2 * (flap_a - p_hat / 2)
-                - h_lambda_coefficient * inflow * (1.5 * flap_a - p_hat)
-                - cc2 * coning / 2 * (flap_b - 4 * induced_skew / 3 + q_hat)
-                - cyclic_b * cyclic_inflow + cyclic_a * cyclic_coning
-                - delta3_tan * (cc2 * coning * flap_a / 2 - cc1 * inflow * flap_b / 2
-                                - 8 * cs2 * inflow * inflow * flap_b / 9)
-                + profile_drag * (4 * mu / 3 - coning * q_hat)))
-            if h_bar is None:
-                missing.append('finite wind-mast H-bar')
         # A-31 Section 9, continued. Values already use each rotor's local signs.
         y_bar = rotor_input_number(q6 * (
             cs0 * mu * mu * flap_b / 2 + cs2 * (flap_b - 2 * induced_skew / 3 + q_hat / 2)
@@ -1520,22 +1746,166 @@ def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
             + profile_drag * coning * p_hat))
         if y_bar is None:
             missing.append('finite wind-mast Y-bar')
-    if None not in (h_bar, y_bar, xi):
-        # A-31 Section 10 specifies the same rotation in each local rotor frame.
-        h = rotor_input_number(h_bar * math.cos(xi) + y_bar * math.sin(xi))
-        y = rotor_input_number(-h_bar * math.sin(xi) + y_bar * math.cos(xi))
-        if None in (h, y):
-            missing.append('finite mast-axis H and Y')
-    record('rotor_h_bar_n', h_bar, 'NASA CR-166536 p. A-30, Section 9')
-    record('rotor_y_bar_n', y_bar, 'NASA CR-166536 p. A-31, Section 9')
-    record('nasa_rotor_h_n', h, MAST_FORCE_ROTATION_SOURCE)
-    record('nasa_rotor_y_n', y, MAST_FORCE_ROTATION_SOURCE)
+    # A-31 Section 10 uses the same rotation in both local rotor frames.
+    # Represent exact cardinal azimuths without a floating-point sine/cosine residue.
+    cos_xi = sin_xi = None
+    if xi is not None:
+        cos_xi = 0.0 if abs(xi) == math.pi / 2 else math.cos(xi)
+        sin_xi = 0.0 if xi == 0 or abs(xi) == math.pi else math.sin(xi)
+
+    def rotate(h_weight, y_weight):
+        if xi is None:
+            return None, 'Requires a defined wind azimuth ξ'
+        terms = ((h_bar, h_weight, 'H-bar'), (y_bar, y_weight, 'Y-bar'))
+        required = [label for value, weight, label in terms if weight != 0 and value is None]
+        if required:
+            return None, 'Requires ' + ' and '.join(required)
+        value = rotor_input_number(sum(value * weight for value, weight, _ in terms if weight != 0))
+        return value, 'Requires a finite rotated force' if value is None else ''
+
+    h, h_reason = rotate(cos_xi, sin_xi)
+    y, y_reason = rotate(-sin_xi if sin_xi is not None else None, cos_xi)
+    y_bar_reason = 'Missing or invalid: ' + ', '.join(y_bar_missing) if y_bar_missing else 'Requires finite Y-bar'
+    record('rotor_h_bar_n', h_bar, 'NASA CR-166536 p. A-30, Section 9', units='N', reason=H_BAR_BLOCKER)
+    record('rotor_y_bar_n', y_bar, 'NASA CR-166536 p. A-31, Section 9', units='N', status=force_status,
+           reason=y_bar_reason)
+    record('nasa_rotor_h_n', h, MAST_FORCE_ROTATION_SOURCE, units='N', status=force_status, reason=h_reason)
+    record('nasa_rotor_y_n', y, MAST_FORCE_ROTATION_SOURCE, units='N', status=force_status, reason=y_reason)
     audit['nasa_in_plane_missing_inputs'] = '; '.join(missing)
     return h, y, audit
 
 
+def audit_rotor_value(audit, key, value, units, source, *, status='CALCULATED', reason=''):
+    audit.update({key: value, f'{key}_units': units, f'{key}_source': source,
+                  f'{key}_status': status if value is not None else 'UNAVAILABLE',
+                  f'{key}_reason': reason})
+
+
+def illustrative_rotor_status(status):
+    return isinstance(status, str) and ('ASSUMED' in status or 'ILLUSTRATIVE' in status)
+
+
+def calculate_xv15_induced_inflow(*, thrust_n, dn_n, mu, lambda_zero, tip_loss_factor,
+                                 ground_effect_factor, washout, side_by_side_factor, tandem_factor):
+    """Fig. A1-3, p. A-24 inner loop with supplied axial thrust held fixed."""
+    inputs = ((thrust_n, 'T'), (dn_n, 'DN'), (mu, 'μ'), (lambda_zero, 'λ₀'),
+              (tip_loss_factor, 'B'), (ground_effect_factor, 'G'), (washout, 'WASHOUT'),
+              (side_by_side_factor, 'X_SS'), (tandem_factor, 'X_SF'))
+    missing = [label for value, label in inputs if rotor_input_number(value) is None]
+    if missing:
+        return None, None, 'UNAVAILABLE', 'Missing or invalid: ' + ', '.join(missing)
+    if thrust_n < 0 or dn_n <= 0 or mu < 0 or tip_loss_factor <= 0:
+        return None, None, 'UNAVAILABLE', 'Requires nonnegative T and μ, positive DN and positive B'
+    scale = rotor_input_number(2 * tip_loss_factor * tip_loss_factor * dn_n, positive=True)
+    q3 = rotor_input_number(thrust_n / scale) if scale is not None else None
+    q5_denominator = rotor_input_number(q3 + 8 * mu * mu, positive=True) if q3 is not None else None
+    if q5_denominator is None:
+        return None, None, 'UNAVAILABLE', 'Fig. A1-3 initialization has no finite Q3 and positive Q5 denominator'
+    root_q3 = math.sqrt(q3)
+    q5 = .6 * q3 * (root_q3 / q5_denominator)
+    total = lambda_zero + q3 * root_q3  # Fig. A1-3 initialization box for the inner loop.
+    numerator = q3 * (1 - (1 - ground_effect_factor) * washout) * (1 + side_by_side_factor + tandem_factor)
+
+    # The printed flowchart tests convergence while I <= 20 and exits after I exceeds 20.
+    for count in range(1, 22):
+        total_squared = total * total
+        correction_denominator = rotor_input_number(q3 + 8 * total_squared, positive=True)
+        if correction_denominator is None:
+            return None, count, 'UNAVAILABLE', 'Fig. A1-3 has a singular or nonfinite wake-correction denominator'
+        correction = q5 * ((q3 + (8 / 3) * total * abs(total)) / correction_denominator)
+        denominator = rotor_input_number(math.hypot(mu, math.sqrt(.866) * total) + correction, positive=True)
+        if denominator is None:
+            return None, count, 'UNAVAILABLE', 'Fig. A1-3 requires a finite positive inflow denominator'
+        q1 = lambda_zero + numerator / denominator
+        induced = rotor_input_number(q1 - lambda_zero)
+        total = .7 * q1 + .3 * total
+        if induced is None or not math.isfinite(total):
+            return None, count, 'UNAVAILABLE', 'Fig. A1-3 produced nonfinite inflow'
+        if count <= 20 and abs(q1 - total) <= .001 * abs(induced) + .0001:
+            return induced, count, 'CONVERGED', ''
+    return None, count, 'NOT CONVERGED', 'Fig. A1-3 iteration limit exceeded'
+
+
+def resolve_xv15_induced_inflow(state, derived, audit, *, thrust, mu, lambda_zero, force_status):
+    equation = 'NASA CR-166536 Fig. A1-3, p. A-24, induced inflow for supplied thrust'
+    source = state.source.strip() if isinstance(state.source, str) else ''
+    factor_status = 'PROVIDED / ASSUMPTIONS' if state.assumptions else 'PROVIDED'
+    factors = {}
+    for key, symbol in (('tip_loss_factor', 'B'), ('ground_effect_factor', 'G'), ('washout', 'WASHOUT'),
+                        ('side_by_side_factor', 'X_SS'), ('tandem_factor', 'X_SF')):
+        value = rotor_input_number(getattr(state, key), positive=key == 'tip_loss_factor') if source else None
+        factors[key] = value
+        audit_rotor_value(audit, f'in_plane_{key}', value, '1', f'{equation} | {source}' if source else equation,
+                          status=factor_status, reason='' if value is not None else f'Sourced {symbol} required')
+    supplied = rotor_input_number(state.induced_inflow) if source else None
+    if supplied is not None:
+        induced, iterations, status, reason = None, None, 'PROVIDED / NOT ITERATED', 'Sourced operating λ_i supplied'
+    else:
+        induced, iterations, status, reason = calculate_xv15_induced_inflow(
+            thrust_n=thrust, dn_n=audit['in_plane_dn_n'], mu=mu, lambda_zero=lambda_zero, **factors)
+    if induced is not None:
+        derived['induced_inflow'] = induced
+    audit_rotor_value(audit, 'in_plane_induced_iteration_count', iterations, '1', equation,
+                      status=force_status, reason=reason)
+    audit['in_plane_induced_convergence_status'] = status
+    audit['in_plane_induced_convergence_source'] = equation
+    audit['in_plane_induced_convergence_reason'] = reason
+
+
+def resolve_xv15_flapping(state, derived, audit, *, force_status):
+    equation = 'NASA CR-166536 pp. A-22, A-26–A-28, C x_dot + A x = B in wind-mast axes'
+    source = state.source.strip() if isinstance(state.source, str) else ''
+    supplied_status = 'PROVIDED / ASSUMPTIONS' if state.assumptions else 'PROVIDED'
+    missing = []
+
+    def supplied(key, value, units, *, positive=False):
+        value = rotor_input_number(value, positive=positive) if source else None
+        if value is None:
+            missing.append(key)
+        audit_rotor_value(audit, f'in_plane_{key}', value, units, f'{equation} | {source}' if source else equation,
+                          status=supplied_status, reason='' if value is not None else f'Sourced {key} required')
+        return value
+
+    def terms(raw, keys, units):
+        if not isinstance(raw, (tuple, list)) or len(raw) != len(keys):
+            raw = (None,) * len(keys)
+        return tuple(supplied(key, value, units) for key, value in zip(keys, raw))
+
+    c11, c12, c21, c22 = terms(state.flapping_c_matrix, ('C11', 'C12', 'C21', 'C22'), 'N m s/rad')
+    a11, a12, a21, a22 = terms(state.flapping_a_matrix, ('A11', 'A12', 'A21', 'A22'), 'N m/rad')
+    b1, b2 = terms(state.flapping_forcing_nm, ('B1_with_controls', 'B2_with_controls'), 'N m')
+    prior_a, prior_b = terms(state.flapping_prior_rad, ('prior_a_bar1', 'prior_b_bar1'), 'rad')
+    step = supplied('flapping_step_s', state.flapping_step_s, 's', positive=True)
+    current_a = rotor_input_number(state.longitudinal_flap_rad) if source else None
+    current_b = rotor_input_number(state.lateral_flap_rad) if source else None
+    result_a = result_b = None
+    reason = 'Missing or invalid: ' + ', '.join(missing) if missing else ''
+    if current_a is not None or current_b is not None:
+        reason = ('Sourced current flapping states supplied' if None not in (current_a, current_b) else
+                  'Supply both current flapping states, or omit them and provide a complete matrix step')
+    elif not missing:
+        # Backward Euler with the supplied, fixed step matrices. A-28 requires nonsingular C.
+        matrix_det = rotor_input_number(c11 * c22 - c12 * c21)
+        m11, m12 = c11 + step * a11, c12 + step * a12
+        m21, m22 = c21 + step * a21, c22 + step * a22
+        step_det = rotor_input_number(m11 * m22 - m12 * m21)
+        if matrix_det and step_det:
+            rhs1 = c11 * prior_a + c12 * prior_b + step * b1
+            rhs2 = c21 * prior_a + c22 * prior_b + step * b2
+            result_a = rotor_input_number((rhs1 * m22 - m12 * rhs2) / step_det)
+            result_b = rotor_input_number((m11 * rhs2 - rhs1 * m21) / step_det)
+        if None in (result_a, result_b):
+            result_a = result_b = None
+            reason = 'Finite, nonsingular C and C + dt A and finite updated states required'
+        else:
+            derived.update(longitudinal_flap_rad=result_a, lateral_flap_rad=result_b)
+    for key, value in (('a_bar1', result_a), ('b_bar1', result_b)):
+        audit_rotor_value(audit, f'in_plane_integrated_{key}_rad', value, 'rad', equation + ' | backward Euler',
+                          status=force_status, reason=reason)
+
+
 def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps, up_mps, air_density,
-                             *, rotor_mast_angles_deg=None, mast_angle_source=None):
+                             *, rotor_mast_angles_deg=None, mast_angle_source=None, temperature_c=None):
     """Apply CR-166536 hub, wind-mast and force-coefficient equations per rotor."""
     source = inputs.source.strip() if isinstance(inputs.source, str) else ''
     calculated_status = 'CALCULATED'
@@ -1553,6 +1923,10 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
     body_status = 'UNAVAILABLE' if (u, v, w) == (None, None, None) else 'PARTIAL'
     if body_known:
         body_status = 'CALCULATED / ASSUMED' if inputs.planar_kinematics else 'PROVIDED'
+    cg_airspeed = rotor_input_number(math.hypot(u, v, w)) if body_known else None
+    if cg_airspeed is None and inputs.planar_kinematics and None not in (forward_mps, up_mps):
+        cg_airspeed = rotor_input_number(math.hypot(forward_mps, up_mps))
+    sound_speed = speed_of_sound_mps(temperature_c)
     p, q, r = map(rotor_input_number, inputs.body_rates_rad_s)
     rates_known = None not in (p, q, r)
     rates_status = 'ASSUMED' if inputs.planar_kinematics else 'PROVIDED'
@@ -1581,6 +1955,9 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
     solidity = rotor_solidity(blades, chord_m, radius)
     delta3_deg = rotor_input_number(getattr(aircraft, 'rotor_delta3_deg', None))
     delta3_tan = math.tan(math.radians(delta3_deg)) if delta3_deg is not None else None
+    precone_deg = rotor_input_number(getattr(aircraft, 'rotor_precone_deg', None))
+    precone_rad = math.radians(precone_deg) if precone_deg is not None else None
+    precone_source = f'rotor.xml: {ROTOR_PRECONE_XML_PATH} (deg × π/180)'
     density = rotor_input_number(air_density, positive=True)
     zero_body_rates = (p, q, r) == (0, 0, 0)
     lxh, lyh, lzh = lever_terms
@@ -1592,7 +1969,7 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
                  lateral_mast_tilt_source=inputs.lateral_mast_tilt_source or source,
                  hub_geometry_xml_fields_inspected=HUB_XML_INSPECTED if inputs.planar_kinematics else '',
                  rotor_radius_m=radius, rotor_radius_status=calculated_status if radius is not None else 'UNAVAILABLE',
-                 rotor_geometry_source=f'rotor.xml: {ROTOR_DIAMETER_XML_PATH}',
+                 rotor_geometry_source=f'rotor.xml: {ROTOR_DIAMETER_XML_PATH} (ft × 0.3048 / 2)',
                  rotor_blade_count=blades, rotor_blade_count_status='XML-SOURCED' if blades is not None else 'UNAVAILABLE',
                  rotor_blade_count_source='rotor.xml: proprotor_and_drive_system/rotor_blades_per_hub',
                  rotor_blade_chord_m=chord_m, rotor_blade_chord_status='CALCULATED' if chord_m is not None else 'UNAVAILABLE',
@@ -1603,6 +1980,14 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
                  rotor_delta3_source=f'rotor.xml: {ROTOR_DELTA3_XML_PATH}',
                  rotor_delta3_tan=delta3_tan, rotor_delta3_tan_status='CALCULATED' if delta3_tan is not None else 'UNAVAILABLE',
                  rotor_delta3_tan_source='NASA CR-166536 p. A-16, tan(radians(delta3 from rotor.xml))',
+                 rotor_cg_airspeed_mps=cg_airspeed,
+                 rotor_cg_airspeed_status=calculated_status if cg_airspeed is not None else 'UNAVAILABLE',
+                 rotor_cg_airspeed_source='NASA CR-166536 p. A-7, V_T = magnitude of CG air-relative velocity',
+                 rotor_cg_airspeed_reason='' if cg_airspeed is not None else 'CG air-relative velocity required',
+                 air_speed_of_sound_mps=sound_speed,
+                 air_speed_of_sound_status=calculated_status if sound_speed is not None else 'UNAVAILABLE',
+                 air_speed_of_sound_source=SOUND_SPEED_SOURCE + ' | environment °C + 273.15, dry-air γ = 1.4 and R = 287.05 J/(kg K)',
+                 air_speed_of_sound_reason='' if sound_speed is not None else 'Air temperature above absolute zero required',
                  air_density_status='USER-PRESCRIBED' if density is not None else 'UNAVAILABLE',
                  air_density_source='TMPE environment air-density input held constant',
                  rotor_flow_source=source, rotor_flow_assumptions=inputs.assumptions)
@@ -1648,9 +2033,10 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
         if mast_angle_deg is not None and not 0 <= mast_angle_deg <= 90:
             mast_angle_deg = None
         axes_known = None not in (mast_angle_deg, phi_deg)
-        if axes_known:
+        if mast_angle_deg is not None:
             beta = math.radians(mast_angle_deg)
-            sin_beta, cos_beta = math.sin(beta), math.cos(beta)
+            sin_beta = math.sin(beta)
+            cos_beta = 0.0 if mast_angle_deg == 90 else math.cos(beta)
         offset_status = geometry_status
         if signed_offset is not None:
             x, y_offset, z = map(rotor_input_number, signed_offset)
@@ -1679,7 +2065,7 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
         ) if value is None)
         omega = rpm * (math.tau / 60) if rpm is not None else None
         omega_effective = hub_u = hub_v = hub_w = advance_ratio = force_coefficient = None
-        xi = lambda_zero = p_hat = q_hat = tip_speed = None
+        xi = mast_plane_speed = lambda_zero = p_hat = q_hat = tip_speed = None
         u_hb = v_hb = w_hb = None
         if zero_body_rates:
             omega_effective = omega
@@ -1692,6 +2078,17 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
                 missing.append(f'{side} positive effective rotor speed Omega prime')
         if None not in (omega_effective, radius):
             tip_speed = rotor_input_number(omega_effective * radius, positive=True)
+        shaft_tip_speed = rotor_input_number(omega * radius, positive=True) if None not in (omega, radius) else None
+        tip_mach_inputs = (
+            (cg_airspeed, 'CG airspeed V_T'), (shaft_tip_speed, 'shaft speed Ω and radius'),
+            (mast_angle_deg, 'mast angle β_m'), (sound_speed, 'speed of sound'),
+        )
+        tip_mach_missing = [label for value, label in tip_mach_inputs if value is None]
+        tip_mach = None
+        if not tip_mach_missing:
+            # A-21 uses shaft Ω and CG speed. The norm is the law-of-cosines expression.
+            tip_mach = rotor_input_number(math.hypot(cg_airspeed + shaft_tip_speed * cos_beta,
+                                                     shaft_tip_speed * sin_beta) / sound_speed)
         body_hub_known = rates_known and body_known and (zero_body_rates or offset_known)
         if body_hub_known:
             u_hb, v_hb, w_hb = u, v, w
@@ -1720,27 +2117,54 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
             cos_xi, sin_xi = math.cos(xi), math.sin(xi)
             p_hat = rotor_input_number((p_mast * cos_xi + q_mast * sin_xi) / omega_effective)
             q_hat = rotor_input_number((-p_mast * sin_xi + q_mast * cos_xi) / omega_effective)
-        state = operating_point.in_plane_state
+        state = operating_point.in_plane_state or XV15InPlaneState()
+        assumed_thrust = illustrative_rotor_status(operating_point.t_status)
+        calculated_force_status = ILLUSTRATIVE_CALCULATION if assumed_thrust or state.assumptions else 'CALCULATED'
+        derived, derivation_audit = calculate_xv15_blade_performance(
+            state, mu=advance_ratio, tip_mach=tip_mach, mast_angle_deg=mast_angle_deg, density=density,
+            radius=radius, tip_speed=tip_speed, solidity=solidity, blade_count=blades, thrust_n=t,
+            omega_effective=omega_effective, precone_rad=precone_rad, precone_source=precone_source)
+        for key in ('in_plane_cr166536_ct', 'in_plane_blade_alpha_r_rad', 'in_plane_blade_cd',
+                    'in_plane_derived_cdf', 'in_plane_derived_coning_rad'):
+            if derivation_audit[key] is not None:
+                derivation_audit[f'{key}_status'] = calculated_force_status
+        if state.assumptions:
+            for key in ('in_plane_derived_lift_slope_per_rad', 'in_plane_q6_n'):
+                if derivation_audit[key] is not None:
+                    derivation_audit[f'{key}_status'] = ILLUSTRATIVE_CALCULATION
+        resolve_xv15_induced_inflow(state, derived, derivation_audit, thrust=t, mu=advance_ratio,
+                                   lambda_zero=lambda_zero, force_status=calculated_force_status)
+        resolve_xv15_flapping(state, derived, derivation_audit, force_status=calculated_force_status)
         h_calc, y_calc, force_audit = calculate_xv15_in_plane_forces(
             state, xi=xi, mu=advance_ratio, lambda_zero=lambda_zero, p_hat=p_hat, q_hat=q_hat,
-            tip_speed=tip_speed, radius=radius, density=density, solidity=solidity, delta3_tan=delta3_tan)
-        force_audit['in_plane_state_assumptions'] = state.assumptions if state is not None else ''
+            tip_speed=tip_speed, radius=radius, density=density, solidity=solidity, delta3_tan=delta3_tan,
+            derived=derived, derivation_audit=derivation_audit, force_status=calculated_force_status)
+        force_audit['in_plane_state_assumptions'] = state.assumptions
         audit.update({f'{side}_{name}': value for name, value in force_audit.items()})
-        in_plane_source = operating_point.in_plane_force_source or source
-        in_plane_status = operating_point.in_plane_force_status
-        if (h is None or y is None) and None not in (h_calc, y_calc):
-            h, y = h_calc, y_calc
-            in_plane_source = WIND_MAST_FORCE_SOURCE + ' and p. A-31, Section 10'
-            in_plane_status = 'CALCULATED'
-            if state.assumptions:
-                selected_force_assumptions.append(state.assumptions)
+        h_source = y_source = operating_point.in_plane_force_source or source
+        h_status = y_status = operating_point.in_plane_force_status
+        force_source = WIND_MAST_FORCE_SOURCE + ' and p. A-31, Section 10'
+        if assumed_thrust:
+            selected_force_assumptions.append('Axial thrust is illustrative or assumed.')
+        used_nasa_force = False
+        if h is None and h_calc is not None:
+            h, h_source, h_status = h_calc, force_source, calculated_force_status
+            used_nasa_force = True
+        if y is None and y_calc is not None:
+            y, y_source, y_status = y_calc, force_source, calculated_force_status
+            used_nasa_force = True
+        if used_nasa_force and state.assumptions:
+            selected_force_assumptions.append(state.assumptions)
+        if any(value is not None and illustrative_rotor_status(status) for value, status in ((h, h_status), (y, y_status))):
+            selected_force_assumptions.append('Selected mast-axis H/Y include illustrative or assumed inputs.')
         missing.extend(f'{side} mast-axis {name} (in-plane {axis} force) for C_RF'
                        for value, name, axis in ((h, 'H', 'longitudinal'), (y, 'Y', 'lateral')) if value is None)
         forces_known = None not in (t, h, y)
-        if source and forces_known and None not in (density, omega, radius):
+        coefficient_status = ILLUSTRATIVE_CALCULATION if any(map(
+            illustrative_rotor_status, (operating_point.t_status, h_status, y_status))) else 'CALCULATED'
+        if source and forces_known and None not in (density, shaft_tip_speed, radius):
             # A-38 uses shaft Omega, while A-20 uses angular-rate-corrected Omega prime.
             disk_area = math.pi * radius**2
-            shaft_tip_speed = omega * radius
             denominator = rotor_input_number(density * disk_area * shaft_tip_speed * shaft_tip_speed, positive=True)
             if denominator is not None:
                 force_coefficient = rotor_input_number(math.hypot(t, h, y) / denominator)
@@ -1762,11 +2186,20 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
             ('wind_azimuth_rad', xi), ('wind_azimuth_status', 'CALCULATED' if xi is not None else 'UNAVAILABLE'),
             ('wind_azimuth_source', WIND_MAST_AZIMUTH_SOURCE),
             ('wind_azimuth_reason', '' if xi is not None else
-             'U_HM and V_HM required' if not hub_known else 'Finite nonzero mast-plane hub velocity required'),
+             'Undefined at zero mast-plane speed' if mast_plane_speed == 0 else
+             'Finite mast-plane U_HM and V_HM required'),
             ('wind_mast_flow_assumptions', wind_mast_assumptions),
             ('in_plane_effective_tip_speed_mps', tip_speed),
             ('in_plane_effective_tip_speed_status', 'CALCULATED' if tip_speed is not None else 'UNAVAILABLE'),
             ('in_plane_effective_tip_speed_source', 'NASA CR-166536 p. A-20, Omega prime × R'),
+            ('rotor_shaft_tip_speed_mps', shaft_tip_speed),
+            ('rotor_shaft_tip_speed_status', calculated_status if shaft_tip_speed is not None else 'UNAVAILABLE'),
+            ('rotor_shaft_tip_speed_source', 'NASA CR-166536 p. A-21, shaft Ω × R'),
+            ('rotor_tip_mach', tip_mach),
+            ('rotor_tip_mach_status', calculated_status if tip_mach is not None else 'UNAVAILABLE'),
+            ('rotor_tip_mach_source', 'NASA CR-166536 p. A-21, MTIP from V_T, shaft ΩR, β_m and speed of sound'),
+            ('rotor_tip_mach_reason', ', '.join(tip_mach_missing) if tip_mach_missing else
+             '' if tip_mach is not None else 'Finite MTIP required'),
             ('in_plane_lambda_zero', lambda_zero),
             ('in_plane_lambda_zero_status', 'CALCULATED' if lambda_zero is not None else 'UNAVAILABLE'),
             ('in_plane_lambda_zero_source', 'NASA CR-166536 p. A-20, -W_HM / (Omega prime × R)'),
@@ -1784,18 +2217,36 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
             ('rotor_t_n', t), ('rotor_h_n', h), ('rotor_y_n', y),
             ('rotor_t_status', operating_point.t_status if t is not None else 'UNAVAILABLE'),
             ('rotor_t_source', operating_point.t_source or source),
-            ('rotor_h_status', in_plane_status if h is not None else 'UNAVAILABLE'),
-            ('rotor_h_source', in_plane_source if h is not None else MAST_FORCE_ROTATION_SOURCE),
-            ('rotor_y_status', in_plane_status if y is not None else 'UNAVAILABLE'),
-            ('rotor_y_source', in_plane_source if y is not None else MAST_FORCE_ROTATION_SOURCE),
+            ('rotor_h_status', h_status if h is not None else 'UNAVAILABLE'),
+            ('rotor_h_source', h_source if h is not None else MAST_FORCE_ROTATION_SOURCE),
+            ('rotor_y_status', y_status if y is not None else 'UNAVAILABLE'),
+            ('rotor_y_source', y_source if y is not None else MAST_FORCE_ROTATION_SOURCE),
             ('rotor_force_status', 'COMPLETE' if forces_known else 'UNAVAILABLE'),
             ('advance_ratio_status', calculated_status if advance_ratio is not None else 'UNAVAILABLE'),
             ('advance_ratio_source', 'NASA CR-166536 p. A-20'),
-            ('force_coefficient_status', calculated_status if force_coefficient is not None else 'UNAVAILABLE'),
+            ('force_coefficient_status', coefficient_status if force_coefficient is not None else 'UNAVAILABLE'),
             ('force_coefficient_source', 'NASA CR-166536 p. A-38'),
         )})
         audit[f'mu_{side}'] = advance_ratio
         audit[f'c_rf_{side}'] = force_coefficient
+        coefficient_dependencies = ', '.join(label for value, label in (
+            (t, 'T'), (h, 'H'), (y, 'Y'), (density, 'air density'), (radius, 'rotor radius'),
+            (shaft_tip_speed, 'shaft RPM'),
+        ) if value is None)
+        audit[f'{side}_force_coefficient_reason'] = (
+            '' if force_coefficient is not None else f'Missing or invalid: {coefficient_dependencies}'
+            if coefficient_dependencies else 'Requires sourced forces and a finite normalization')
+        audit[f'{side}_rotor_h_reason'] = '' if h is not None else force_audit.get('nasa_rotor_h_n_reason', '')
+        audit[f'{side}_rotor_y_reason'] = '' if y is not None else force_audit.get('nasa_rotor_y_n_reason', '')
+        audit[f'{side}_advance_ratio_reason'] = (
+            '' if advance_ratio is not None else 'Requires mast-axis U, V and positive effective tip speed')
+        audit[f'{side}_in_plane_lambda_zero_reason'] = (
+            '' if lambda_zero is not None else 'Requires mast-axis W and positive effective tip speed')
+        audit[f'{side}_in_plane_effective_tip_speed_reason'] = (
+            '' if tip_speed is not None else 'Requires positive effective rotor speed and radius')
+        audit[f'{side}_rotor_rpm_reason'] = '' if rpm is not None else 'Requires finite positive operating RPM'
+        audit[f'{side}_rotor_speed_reason'] = (
+            '' if omega_effective is not None else 'Requires shaft RPM, body rates and applicable mast angles')
     geometry_known = 'UNAVAILABLE' not in geometry_statuses
     audit.update(hub_geometry_status=' / '.join(dict.fromkeys(geometry_statuses)) if geometry_known else 'UNAVAILABLE',
                  hub_geometry_source=source if geometry_known else '', hub_geometry_note='')
@@ -2037,7 +2488,7 @@ def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=No
     if isinstance(rotor_flow, XV15RotorInputs):
         rotor_flow, input_audit, rotor_missing = calculate_xv15_rotor_flow(
             rotor_flow, aircraft, beta, pitch, forward, up, density, rotor_mast_angles_deg=mast_angles,
-            mast_angle_source='90° minus the rotor nacelle angle in Phase 2')
+            mast_angle_source='90° minus the rotor nacelle angle in Phase 2', temperature_c=environment.temperature)
         row.update(input_audit)
         row['rotor_flow_missing_inputs'] = ', '.join(rotor_missing)
     else:
@@ -2064,9 +2515,9 @@ def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=No
                    aero_status='ILLUSTRATIVE / SOFTWARE-TEST ASSUMPTIONS')
         return row
     if nasa:
-        temperature = rotor_input_number(environment.temperature)
-        if speed is not None and temperature is not None and temperature > -273.15:
-            row['mach'] = speed / math.sqrt(1.4 * 287.05 * (temperature + 273.15))
+        sound_speed = speed_of_sound_mps(environment.temperature)
+        if speed is not None and sound_speed is not None:
+            row['mach'] = speed / sound_speed
         correction, rotor_audit, correction_missing = polar.rotor_flow_correction(beta, rotor_flow)
         row.update(rotor_audit)
         illustrative = bool(rotor_flow.assumptions)
@@ -2175,7 +2626,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
         for side in ('left', 'right'):
             preflight.update({f'{side}_{key}': value for key, value in (
                 ('thrust_n', takeoff[side]['value']),
-                ('rotor_rpm', rpm), ('rotor_rpm_status', 'XML-SOURCED / ACCEPTED' if rpm is not None else 'UNAVAILABLE'),
+                ('rotor_rpm', rpm), ('rotor_rpm_status', HELD_HOVER_RPM_STATUS if rpm is not None else 'UNAVAILABLE'),
                 ('rotor_rpm_source', f'rotor.xml: {HOVER_RPM_XML_PATH}'),
                 ('hub_u_body_mps', None), ('hub_v_body_mps', None), ('hub_w_body_mps', None),
                 ('hub_u_mast_mps', None), ('hub_v_mast_mps', None), ('hub_w_mast_mps', None),
@@ -2644,7 +3095,8 @@ def write_transition_audit(rows, audit_path):
          'left_rotor_forward_n', 'left_rotor_up_n', 'right_rotor_forward_n', 'right_rotor_up_n',
          'total_rotor_forward_n', 'total_rotor_up_n'),
         ('wind_speed_mps', 'wind_from_deg', 'wind_forward_mps', 'wind_east_mps', 'wind_cross_plane_mps',
-         'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3', 'temperature_c'),
+         'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_density_kg_m3', 'temperature_c',
+         'air_speed_of_sound_mps', 'rotor_cg_airspeed_mps'),
         ('heading_deg', 'pitch_attitude_deg', 'body_u_mps', 'body_v_mps', 'body_w_mps',
          'body_p_rad_s', 'body_q_rad_s', 'body_r_rad_s',
          'beta_m_deg', 'lateral_mast_tilt_deg', 'lxh_m', 'lyh_m', 'lzh_m', 'rotor_radius_m',
@@ -2653,12 +3105,16 @@ def write_transition_audit(rows, audit_path):
          'left_hub_u_body_mps', 'left_hub_v_body_mps', 'left_hub_w_body_mps',
          'left_hub_u_mast_mps', 'left_hub_v_mast_mps', 'left_hub_w_mast_mps',
          'left_rotor_rpm', 'left_rotor_omega_rad_s', 'left_rotor_omega_effective_rad_s',
+         'left_rotor_shaft_tip_speed_mps', 'left_in_plane_effective_tip_speed_mps', 'left_rotor_tip_mach',
+         'left_in_plane_dn_n', 'left_in_plane_q6_n', 'left_in_plane_induced_iteration_count',
          'left_wind_azimuth_rad', 'left_wind_mast_p_hat', 'left_wind_mast_q_hat', 'left_in_plane_lambda_zero',
          'left_rotor_h_bar_n', 'left_rotor_y_bar_n', 'left_rotor_t_n', 'left_rotor_h_n', 'left_rotor_y_n', 'c_rf_left', 'mu_left'),
         ('right_beta_m_deg', 'right_cg_to_hub_x_m', 'right_cg_to_hub_y_m', 'right_cg_to_hub_z_m',
          'right_hub_u_body_mps', 'right_hub_v_body_mps', 'right_hub_w_body_mps',
          'right_hub_u_mast_mps', 'right_hub_v_mast_mps', 'right_hub_w_mast_mps',
          'right_rotor_rpm', 'right_rotor_omega_rad_s', 'right_rotor_omega_effective_rad_s',
+         'right_rotor_shaft_tip_speed_mps', 'right_in_plane_effective_tip_speed_mps', 'right_rotor_tip_mach',
+         'right_in_plane_dn_n', 'right_in_plane_q6_n', 'right_in_plane_induced_iteration_count',
          'right_wind_azimuth_rad', 'right_wind_mast_p_hat', 'right_wind_mast_q_hat', 'right_in_plane_lambda_zero',
          'right_rotor_h_bar_n', 'right_rotor_y_bar_n', 'right_rotor_t_n', 'right_rotor_h_n', 'right_rotor_y_n', 'c_rf_right', 'mu_right'),
         ('rotor_advance_ratio_mean', 'rotor_advance_ratio_for_correction', 'rotor_wing_induction',
@@ -2764,19 +3220,35 @@ def report_transition_csvs(result, checkpoints, audit_path):
         ('nacelle_deg', 'nacelle_deg'), ('mast_angle_deg', 'beta_m_deg'),
         ('rotor_rpm', 'rotor_rpm'), ('rotor_rpm_status', 'rotor_rpm_status'),
         ('rotor_rpm_source', 'rotor_rpm_source'),
+        ('effective_tip_speed_mps', 'in_plane_effective_tip_speed_mps'),
+        ('tip_mach', 'rotor_tip_mach'), ('tip_mach_status', 'rotor_tip_mach_status'),
+        ('axial_inflow_ratio', 'in_plane_lambda_zero'), ('wind_azimuth_rad', 'wind_azimuth_rad'),
+        ('dn_n', 'in_plane_dn_n'), ('q6_n', 'in_plane_q6_n'),
+        ('induced_inflow_ratio', 'in_plane_induced_inflow'),
+        ('induced_inflow_iterations', 'in_plane_induced_iteration_count'),
+        ('induced_inflow_status', 'in_plane_induced_convergence_status'),
+        ('induced_inflow_reason', 'in_plane_induced_convergence_reason'),
+        ('wind_mast_h_bar_n', 'rotor_h_bar_n'), ('h_bar_status', 'rotor_h_bar_n_status'),
+        ('h_bar_source', 'rotor_h_bar_n_source'), ('h_bar_reason', 'rotor_h_bar_n_reason'),
+        ('wind_mast_y_bar_n', 'rotor_y_bar_n'), ('y_bar_status', 'rotor_y_bar_n_status'),
+        ('y_bar_source', 'rotor_y_bar_n_source'), ('y_bar_reason', 'rotor_y_bar_n_reason'),
         ('mast_t_n', 'rotor_t_n'), ('mast_t_status', 'rotor_t_status'), ('mast_t_source', 'rotor_t_source'),
         ('mast_h_n', 'rotor_h_n'), ('mast_h_status', 'rotor_h_status'), ('mast_h_source', 'rotor_h_source'),
+        ('mast_h_reason', 'rotor_h_reason'),
         ('mast_y_n', 'rotor_y_n'), ('mast_y_status', 'rotor_y_status'), ('mast_y_source', 'rotor_y_source'),
+        ('mast_y_reason', 'rotor_y_reason'),
         ('rotor_force_status', 'rotor_force_status'),
         ('held_phase1_thrust_n', 'thrust_n'), ('held_thrust_status', 'rotor_status'),
         ('projected_forward_n', 'rotor_forward_n'), ('projected_up_n', 'rotor_up_n'),
         ('phase1_ct', 'thrust_coefficient'), ('phase1_ct_status', 'ct_status'), ('phase1_ct_source', 'ct_source'),
         ('phase1_calibration', 'rotor_calibration'),
+        ('in_plane_assumptions', 'in_plane_state_assumptions'),
     )
     rotor_fields = ('phase2_time_s', 'rotor_side', 'rotor_model', *(name for name, _ in rotor_columns),
                     'advance_ratio', 'advance_ratio_status', 'advance_ratio_source',
-                    'c_rf', 'c_rf_status', 'c_rf_source', 'rotor_flow_source',
-                    'first_missing_in_plane_input', 'rotor_flow_input_note')
+                    'c_rf', 'c_rf_status', 'c_rf_source', 'c_rf_reason', 'rotor_flow_source',
+                    'rotor_flow_assumptions', 'first_missing_in_plane_input', 'unresolved_in_plane_inputs',
+                    'rotor_flow_input_note')
     rotor_rows = []
     for row in checkpoints:
         for side in ('left', 'right'):
@@ -2790,8 +3262,11 @@ def report_transition_csvs(result, checkpoints, audit_path):
                                    advance_ratio_source=row.get(f'{side}_advance_ratio_source'),
                                    c_rf=row.get(f'c_rf_{side}'), c_rf_status=row.get(f'{side}_force_coefficient_status'),
                                    c_rf_source=row.get(f'{side}_force_coefficient_source'),
+                                   c_rf_reason=row.get(f'{side}_force_coefficient_reason'),
                                    rotor_flow_source=row.get('rotor_flow_source'),
+                                   rotor_flow_assumptions=row.get('rotor_flow_assumptions'),
                                    first_missing_in_plane_input=first_missing_input,
+                                   unresolved_in_plane_inputs=missing_in_plane,
                                    rotor_flow_input_note=row.get('rotor_flow_input_note')))
     write_transition_report(report_dir / 'stage2_rotors.csv', rotor_fields, rotor_rows)
 
@@ -3153,13 +3628,33 @@ def report_status_summary(takeoff, transition, polar):
     if not evaluated:
         print('Phase 2 rotor flow — NOT EVALUATED')
     elif row.get('rotor_flow_status'):
-        print(f"Phase 2 rotor flow — {row['rotor_flow_status']}")
+        geometry = [('Radius (m)', 'rotor_radius_m'), ('Blades per rotor', 'rotor_blade_count'),
+                    ('Solidity', 'rotor_solidity')]
+        print('Rotor geometry')
+        print_report_table([label for label, _ in geometry],
+                           [tuple(report_cell(row.get(key)) for _, key in geometry)])
+        print('Dynamic flow')
+        print_report_table(('Rotor', 'RPM', 'Tip (m/s)', 'Tip Mach', 'μ', 'λ₀'), [
+            (side.title(), *(report_cell(row.get(key)) for key in (
+                f'{side}_rotor_rpm', f'{side}_in_plane_effective_tip_speed_mps', f'{side}_rotor_tip_mach',
+                f'mu_{side}', f'{side}_in_plane_lambda_zero')))
+            for side in ('left', 'right')])
+        if all(row.get(f'{side}_rotor_rpm_status') == HELD_HOVER_RPM_STATUS for side in ('left', 'right')):
+            print('RPM — XML-SOURCED / HELD FIXED (design hover input)')
+        print(f"Rotor inputs for wing AoA correction — {row['rotor_flow_status']}")
+        print('H/Y forces')
+        print_report_table(('Rotor', 'H-bar (N)', 'Y-bar (N)', 'H (N)', 'Y (N)', 'C_RF', 'C_RF status'), [
+            (side.title(), *(report_cell(row.get(key)) for key in (
+                f'{side}_rotor_h_bar_n', f'{side}_rotor_y_bar_n', f'{side}_rotor_h_n', f'{side}_rotor_y_n',
+                f'c_rf_{side}')), row.get(f'{side}_force_coefficient_status', ''))
+            for side in ('left', 'right')])
         missing = [f'{side.title()} {force.upper()}' for side in ('left', 'right') for force in ('t', 'h', 'y')
                    if row.get(f'{side}_rotor_{force}_status') == 'UNAVAILABLE']
         if missing:
-            print('Unavailable mast-axis forces — ' + ', '.join(missing))
-        elif row.get('rotor_flow_assumptions'):
-            print('Phase 2 rotor flow includes illustrative assumptions.')
+            print('Unresolved inputs — ' + ', '.join(missing) + ' unavailable. See the rotor CSV and wide audit.')
+        if any(illustrative_rotor_status(row.get(f'{side}_rotor_{force}_status'))
+               for side in ('left', 'right') for force in ('h', 'y')):
+            print('Selected H/Y include illustrative or assumed values. See per-rotor statuses in the CSV.')
 
     print('\nWING/AERO STATUS')
     if polar is None:
