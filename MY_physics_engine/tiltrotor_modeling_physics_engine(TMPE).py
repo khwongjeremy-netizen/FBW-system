@@ -1338,9 +1338,12 @@ IN_PLANE_STATE_FIELDS = (
     ('longitudinal_cyclic_mast_rad', 'mast-axis longitudinal cyclic B1', 'p. A-21'),
 )
 HOVER_CT_SOURCE = 'NASA CR-177436 List of Symbols pp. xiv–xvi and §7.1, Figs. 7.1–7.3, pp. 50–54'
+HOVER_CT_COMPARISON_SOURCE = 'NASA CR-177436 §7.1, p. 53, original metal-blade isolated hover tests'
+HOVER_CT_ALTERNATING_LOAD_ONSET = .0161
+HOVER_CT_SUGGESTED_MAXIMUM = .0165
 HOVER_CT_COVERAGE = (
-    'Isolated full-scale baseline metal rotor hover tests. Figure 7.3 uses measured blade pitch at 0.75R. '
-    'Ames run averages 582.8–586.2 rpm and tip Mach 0.688–0.691. '
+    'Isolated full-scale baseline metal rotor hover tests. Figure 7.3 uses blade pitch at 0.75R. '
+    'Figure 7.3 Ames run averages 582.8–586.2 rpm and tip Mach 0.688–0.691. '
     'The separate WPAFB whirl-tower comparison includes a 740 ft/s tip-speed series.'
 )
 HOVER_CT_LIMITATION = (
@@ -1352,6 +1355,17 @@ HOVER_CT_LIMITATION = (
 THRUST_CT_DEFINITION = 'NASA CR-177436 pp. xiv–xv: CT = T / [rho pi R² (unprimed shaft Omega R)²]'
 
 
+def cr177436_hover_ct_comparison(ct):
+    """Compare coefficients in the same convention without transferring the test limit."""
+    if not isinstance(ct, (int, float)) or isinstance(ct, bool) or not math.isfinite(ct) or ct < 0:
+        return 'UNAVAILABLE'
+    if ct > HOVER_CT_SUGGESTED_MAXIMUM:
+        return 'ABOVE SUGGESTED HOVER MAXIMUM'
+    if ct > HOVER_CT_ALTERNATING_LOAD_ONSET:
+        return 'ABOVE REPORTED ALTERNATING-LOAD ONSET'
+    return 'AT OR BELOW REPORTED ALTERNATING-LOAD ONSET'
+
+
 def transition_thrust_coefficient_audit(takeoff):
     """Identify the selected Phase 1 CT and the separate hover-data availability."""
     audit = dict(cr177436_hover_ct_status='UNAVAILABLE',
@@ -1360,19 +1374,25 @@ def transition_thrust_coefficient_audit(takeoff):
                  cr177436_hover_ct_data_kind='PUBLISHED PLOTS; no graph-digitized values used',
                  cr177436_hover_ct_coverage=HOVER_CT_COVERAGE,
                  cr177436_hover_ct_limitation=HOVER_CT_LIMITATION,
+                 cr177436_ct_alternating_load_onset=HOVER_CT_ALTERNATING_LOAD_ONSET,
+                 cr177436_ct_suggested_hover_maximum=HOVER_CT_SUGGESTED_MAXIMUM,
+                 cr177436_ct_comparison_source=HOVER_CT_COMPARISON_SOURCE,
+                 cr177436_ct_comparison_scope='Coefficient convention comparison only. Test limits do not establish installed takeoff or transition capability.',
                  thrust_coefficient_definition=THRUST_CT_DEFINITION,
                  selected_ct_application='Phase 1 model. Phase 2 holds its modeled axial thrust for the demonstration.')
     for side in ('left', 'right'):
         rotor = takeoff[side]
         bounds = rotor.get('pitch_bounds') or {}
         pitch = rotor.get('theta_deg')
+        ct = rotor.get('thrust_coefficient')
         audit.update({f'{side}_{key}': value for key, value in (
             ('cr177436_hover_ct', None),
             ('cr177436_hover_thrust_n', None),
             ('collective_input_deg', pitch),
             ('collective_input_status', 'PROVIDED' if pitch is not None else 'UNAVAILABLE'),
             ('collective_input_source', 'TMPE pilot collective command; blade angle at 0.75R unverified'),
-            ('thrust_coefficient', rotor.get('thrust_coefficient')),
+            ('thrust_coefficient', ct),
+            ('cr177436_ct_comparison_status', cr177436_hover_ct_comparison(ct)),
             ('ct_status', rotor.get('ct_status', 'UNAVAILABLE')),
             ('ct_data_kind', rotor.get('ct_data_kind', 'UNAVAILABLE')),
             ('ct_source', rotor.get('source') if 'ct_status' in rotor else None),
@@ -1675,6 +1695,8 @@ def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
                                 positive=True)
     induced = values['induced_inflow']
     inflow = rotor_input_number(lambda_zero + induced) if None not in (lambda_zero, induced) else None
+    induced_velocity = (rotor_input_number(induced * tip_speed)
+                        if None not in (induced, tip_speed) else None)
     cyclic_a = cyclic_b = None
     if None not in (xi, values['lateral_cyclic_mast_rad'], values['longitudinal_cyclic_mast_rad']):
         a = values['lateral_cyclic_mast_rad']
@@ -1685,12 +1707,16 @@ def calculate_xv15_in_plane_forces(state, *, xi, mu, lambda_zero, p_hat, q_hat,
         ('in_plane_q6_n', q6, 'pp. A-20–A-21', 'N', 'Requires density, radius, effective tip speed, solidity and lift slope'),
         ('in_plane_total_inflow', inflow, 'Fig. A1-3, p. A-24, lambda = lambda_0 + lambda_i', '1',
          'Requires axial and induced inflow ratios'),
+        ('in_plane_induced_velocity_mps', induced_velocity,
+         'pp. A-20, A-24, induced ratio × effective tip speed', 'm/s',
+         'Requires induced inflow ratio and effective tip speed'),
         ('in_plane_lateral_cyclic_wind_rad', cyclic_a, 'p. A-21', 'rad', 'Requires A1, B1 and wind azimuth'),
         ('in_plane_longitudinal_cyclic_wind_rad', cyclic_b, 'p. A-21', 'rad', 'Requires A1, B1 and wind azimuth'),
     ):
         if key not in audit:
             record(key, value, f'NASA CR-166536 {page}', units=units, reason=reason,
-                   status=force_status if key == 'in_plane_total_inflow' else 'CALCULATED')
+                   status=force_status if key in ('in_plane_total_inflow', 'in_plane_induced_velocity_mps')
+                   else 'CALCULATED')
     missing.extend(label for value, label in (
         (xi, 'wind azimuth xi from a nonzero mast-plane hub velocity'),
         (mu, 'mast-plane advance ratio mu'),
@@ -2338,8 +2364,7 @@ class XV15WingPylonPolar:
         return correction_rad, inputs, missing
 
     @staticmethod
-    def sample(tables, alpha, beta, mach):
-        """Evaluate one coefficient on its original AoA grid."""
+    def coefficient_grid(tables, beta, mach):
         samples = {}
         for table, page, mast, _, mach_range, values in tables:
             if mast != beta or not mach_range[0] <= mach <= mach_range[1]:
@@ -2348,6 +2373,12 @@ class XV15WingPylonPolar:
                 entries = samples.setdefault(angle, {})
                 if value is not None:
                     entries.setdefault(value, set()).add(f'Table {table} p. {page}')
+        return samples
+
+    @classmethod
+    def sample(cls, tables, alpha, beta, mach):
+        """Evaluate one coefficient on its original AoA grid."""
+        samples = cls.coefficient_grid(tables, beta, mach)
         angles = sorted(samples)
         index = bisect_left(angles, alpha)
         if index < len(angles) and angles[index] == alpha:
@@ -2381,9 +2412,16 @@ class XV15WingPylonPolar:
         status = 'NASA REPORT DATA'
         if missing is not None:
             name, missing_mast = missing
+            tables = self.lift_tables if name == 'CL' else self.drag_tables
+            grid = self.coefficient_grid(tables, missing_mast, mach)
+            defined = sorted(angle for angle, samples in grid.items() if len(samples) == 1)
+            if defined:
+                coverage = f'defined AoA span [{defined[0]:g}, {defined[-1]:g}] deg with table gaps; no extrapolation'
+            else:
+                coverage = 'no uniquely defined AoA rows at this flap setting and Mach'
             reason = (f'NASA report {name} unavailable at AoA {alpha:.6g} deg, '
                       f'Mach {mach:.6g}: required table mast {missing_mast:g} deg '
-                      f'(requested mast {beta:.6g} deg)')
+                      f'(requested mast {beta:.6g} deg). {coverage}')
             return None, reason
 
         coefficients, sources = [], []
@@ -2590,10 +2628,13 @@ def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=No
     return row
 
 
+PRESCRIBED_TRANSITION = 'PRESCRIBED KINEMATIC / ILLUSTRATIVE / UNVALIDATED'
+
+
 def simulate_transition(takeoff, aircraft, environment, polar, duration_s, timestep_s, end_angles, *,
                         pitch_attitude_deg=None, rotor_flow_provider=None, illustrative_rotor_flow=False,
-                        heading_deg=0.0):
-    """Integrate available forces in the fixed-heading plane using held Phase 1 thrust.
+                        heading_deg=0.0, prescribed_velocity_mps=None, prescribed_start_height_m=None):
+    """Integrate available forces or evaluate an explicit constant-velocity schedule.
 
     A rotor_flow_provider(state, environment) may supply XV15RotorInputs for
     each NASA lookup or return resolved XV15RotorFlow. The built-in provider
@@ -2609,10 +2650,29 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
     require_finite('Phase 2 heading', heading_deg)
     state = replace(initialize_transition(takeoff), pitch_attitude_deg=pitch_attitude_deg,
                     heading_deg=heading_deg)
+    prescribed = prescribed_velocity_mps is not None
+    if prescribed_start_height_m is not None and not prescribed:
+        raise ValueError('A prescribed start height requires prescribed Phase 2 velocity')
+    if prescribed:
+        vx, vz = prescribed_velocity_mps
+        require_finite('Prescribed forward velocity', vx)
+        require_finite('Prescribed up velocity', vz)
+        height = state.height_agl_m if prescribed_start_height_m is None else prescribed_start_height_m
+        require_finite('Prescribed start height AGL', height, 0)
+        final_height = height + vz * duration_s
+        if not math.isfinite(final_height) or final_height < 0:
+            raise ValueError('Prescribed trajectory must end at a finite height at or above ground')
+        if not math.isfinite(state.forward_distance_m + vx * duration_s):
+            raise ValueError('Prescribed trajectory must end at a finite forward distance')
+        state = replace(state, height_agl_m=height, forward_velocity_mps=vx, vertical_velocity_mps=vz)
+    origin = state
+    trajectory_source = ('Explicit constant forward/up velocity and linear nacelle schedule' if prescribed else
+                         'TMPE planar force balance and Phase 1 handoff')
+    trajectory_status = PRESCRIBED_TRANSITION if prescribed else 'ILLUSTRATIVE / SOFTWARE-TEST ONLY'
     result = dict(final_state=state, elapsed_s=0.0, requested_s=duration_s, rows=[], simplified=polar is None,
-                  status='UNAVAILABLE', reason='')
+                  status='UNAVAILABLE', reason='', prescribed=prescribed)
     coefficient_audit = transition_thrust_coefficient_audit(takeoff)
-    if takeoff['motion']['takeoff_status'] != 'AIRBORNE' or state.height_agl_m <= 0:
+    if not prescribed and (takeoff['motion']['takeoff_status'] != 'AIRBORNE' or state.height_agl_m <= 0):
         result['reason'] = (f"Phase 1 ended {takeoff['motion']['takeoff_status']}. "
                             f"{takeoff['motion']['reason']}")
         preflight = dict(coefficient_audit, **transition_environment_audit(environment),
@@ -2649,16 +2709,23 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
     step = 0
     landed = False
     while True:
-        fraction = time / duration_s
-        angles = tuple(None if start is None else start + fraction * (end - start)
-                       for start, end in zip(starts, (left_end, right_end)))
+        if time == duration_s:
+            angles = (left_end, right_end)
+        else:
+            fraction = time / duration_s
+            angles = tuple(None if start is None else start + fraction * (end - start)
+                           for start, end in zip(starts, (left_end, right_end)))
         state = replace(state, left_nacelle_angle_deg=angles[0], right_nacelle_angle_deg=angles[1])
         row = dict(coefficient_audit, audit_record='PHASE 2 EVALUATION',
                    phase2_time_s=time, simulation_time_s=state.elapsed_s, height_agl_m=state.height_agl_m,
                    forward_distance_m=state.forward_distance_m, forward_velocity_mps=state.forward_velocity_mps,
                    vertical_velocity_mps=state.vertical_velocity_mps, mass_kg=mass,
                    aircraft_weight_n=None if mass is None else mass * G, rotor_model=takeoff['rotor_model'],
-                   trajectory_status='ILLUSTRATIVE / SOFTWARE-TEST ONLY',
+                   trajectory_status=trajectory_status, trajectory_source=trajectory_source,
+                   phase2_motion_mode='PRESCRIBED KINEMATIC' if prescribed else 'FORCE-BASED',
+                   phase2_start_height_source=('USER-PRESCRIBED' if prescribed_start_height_m is not None else
+                                               'PHASE 1 RETAINED STATE'),
+                   phase2_force_balance_role='DIAGNOSTIC ONLY' if prescribed else 'MOTION INPUT',
                    aircraft_transition_status='UNAVAILABLE')
         rotor_vectors = []
         for side, angle in zip(('left', 'right'), angles):
@@ -2686,12 +2753,8 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
                    net_forward_n=net_forward, net_up_n=net_up)
         acceleration = planar_force_balance(mass, net_forward, net_up)
         row.update(acceleration)
-        result['rows'].append(row)
-        result.update(final_state=state, elapsed_s=time)
         ax, az = acceleration['forward_acceleration_mps2'], acceleration['vertical_acceleration_mps2']
-        if landed:
-            result.update(status='GROUND CONTACT', reason='Airborne integration stopped at ground contact')
-            break
+        balance_reason = ''
         if ax is None or az is None:
             missing = [f'{side} {quantity}' for side in ('left', 'right')
                        for quantity, suffix in (('rotor thrust', 'thrust_n'), ('nacelle angle', 'nacelle_deg'))
@@ -2701,10 +2764,19 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
             reasons = [row['aero_reason']] if row['aero_reason'] else []
             if missing:
                 reasons.append('Missing ' + ', '.join(missing))
-            result['reason'] = '. '.join(reasons)
+            balance_reason = '. '.join(reasons) or 'Both net force components and mass are required'
+        row.update(force_balance_status='UNAVAILABLE' if balance_reason else 'CALCULATED',
+                   force_balance_reason=balance_reason)
+        result['rows'].append(row)
+        result.update(final_state=state, elapsed_s=time)
+        if landed:
+            result.update(status='GROUND CONTACT', reason='Airborne integration stopped at ground contact')
+            break
+        if not prescribed and balance_reason:
+            result['reason'] = balance_reason
             break
         if time == duration_s:
-            result.update(status='CALCULATED', reason='Requested duration reached')
+            result.update(status='PRESCRIBED' if prescribed else 'CALCULATED', reason='Requested duration reached')
             break
 
         step += 1
@@ -2713,6 +2785,12 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
         if dt <= 0:
             result['reason'] = 'Timestep too small to advance the simulation clock'
             break
+        if prescribed:
+            state = replace(state, elapsed_s=origin.elapsed_s + next_time,
+                            height_agl_m=origin.height_agl_m + origin.vertical_velocity_mps * next_time,
+                            forward_distance_m=origin.forward_distance_m + origin.forward_velocity_mps * next_time)
+            time = next_time
+            continue
         h, vz, vx = state.height_agl_m, state.vertical_velocity_mps, state.forward_velocity_mps
         height = h + vz * dt + .5 * az * dt**2
         # An upward acceleration can bring the aircraft back above ground
@@ -2732,7 +2810,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
     return result
 
 
-def report_transition_equations(simplified=False, nasa=False):
+def report_transition_equations(simplified=False, nasa=False, prescribed=False):
     print('The inertial plane follows the fixed heading. Forward and up are positive. Cross-plane wind is excluded.')
     print('Nacelles: independent linear ramps over requested duration, 0 deg forward / 90 deg up.')
     print('Rotor magnitudes held at Phase 1 values with original calibration status. Prototype T = CT rho A (Omega R)^2.')
@@ -2761,7 +2839,11 @@ def report_transition_equations(simplified=False, nasa=False):
         print('Wing forward = -L*sin(gamma) - D*cos(gamma); wing up = L*cos(gamma) - D*sin(gamma).')
     print('The held-thrust demonstration projects each rotor forward = T*cos(nacelle); up = T*sin(nacelle).')
     print('Net forward = rotor forward + wing forward; net up = rotor up + wing up - mass*g.')
-    print('a = F_net/m; v_next = v + a*dt; position_next = position + v*dt + 0.5*a*dt².')
+    if prescribed:
+        print('Prescribed position = starting position + user-supplied velocity × Phase 2 time.')
+        print('Any evaluated forces and net-force accelerations are diagnostics for the prescribed state.')
+    else:
+        print('a = F_net/m; v_next = v + a*dt; position_next = position + v*dt + 0.5*a*dt².')
 
 
 AIRCRAFT_TRANSITION_BLOCKER = (
@@ -2814,7 +2896,14 @@ def report_timed_transition(result, audit_path=None, *, verbose=False):
     status, reason = result['status'], result['reason']
     if not verbose and rows and rows[-1]['aero_reason']:
         reason = reason.replace(rows[-1]['aero_reason'], compact_aero_reason(rows[-1]), 1)
-    print(f'Phase 2 demonstration — ILLUSTRATIVE / {status}')
+    if result.get('prescribed'):
+        print(f'Phase 2 demonstration — {PRESCRIBED_TRANSITION}')
+        first = rows[0]
+        print(f"Start {first['height_agl_m']:.4g} m AGL ({first['phase2_start_height_source']}) | "
+              f"Prescribed {first['forward_velocity_mps']:.4g} m/s forward, {first['vertical_velocity_mps']:.4g} m/s up")
+        print('Force balance is diagnostic only.')
+    else:
+        print(f'Phase 2 force-based — ILLUSTRATIVE / {status}')
     if reason:
         label = 'Blocker' if status == 'UNAVAILABLE' else 'Outcome'
         print(f'{label} — {reason}')
@@ -3198,7 +3287,8 @@ def report_transition_csvs(result, checkpoints, audit_path):
         'aircraft_weight_n', 'net_forward_n', 'net_up_n',
         'forward_acceleration_mps2', 'vertical_acceleration_mps2',
         'phase2_status', 'phase2_reason', 'aero_status', 'aero_reason',
-        'trajectory_status', 'aircraft_transition_status',
+        'trajectory_status', 'trajectory_source', 'phase2_motion_mode', 'phase2_force_balance_role',
+        'force_balance_status', 'force_balance_reason', 'phase2_start_height_source', 'aircraft_transition_status',
     )
     companion_rows = []
     for row in checkpoints:
@@ -3208,11 +3298,14 @@ def report_transition_csvs(result, checkpoints, audit_path):
             if aero_reason != row['aero_reason']:
                 reason = reason.replace(row['aero_reason'], aero_reason, 1)
         else:
-            forces_available = None not in (row['forward_acceleration_mps2'], row['vertical_acceleration_mps2'])
-            status = 'CALCULATED' if forces_available else 'UNAVAILABLE'
-            reason = aero_reason
+            status = 'PRESCRIBED' if result.get('prescribed') else row['force_balance_status']
+            reason = '' if result.get('prescribed') else aero_reason
+        balance_reason = row['force_balance_reason']
+        if row['aero_reason'] and aero_reason != row['aero_reason']:
+            balance_reason = balance_reason.replace(row['aero_reason'], aero_reason, 1)
         companion_rows.append(dict(row, phase2_status=status, phase2_reason=reason,
-                                   aero_reason=aero_reason, requested_mast_deg=row.get('beta_m_deg'),
+                                   aero_reason=aero_reason, force_balance_reason=balance_reason,
+                                   requested_mast_deg=row.get('beta_m_deg'),
                                    requested_mast_status=row.get('beta_m_status')))
     write_transition_report(report_dir / 'stage2_checkpoints.csv', checkpoint_fields, companion_rows)
 
@@ -3225,6 +3318,7 @@ def report_transition_csvs(result, checkpoints, audit_path):
         ('axial_inflow_ratio', 'in_plane_lambda_zero'), ('wind_azimuth_rad', 'wind_azimuth_rad'),
         ('dn_n', 'in_plane_dn_n'), ('q6_n', 'in_plane_q6_n'),
         ('induced_inflow_ratio', 'in_plane_induced_inflow'),
+        ('induced_velocity_mps', 'in_plane_induced_velocity_mps'),
         ('induced_inflow_iterations', 'in_plane_induced_iteration_count'),
         ('induced_inflow_status', 'in_plane_induced_convergence_status'),
         ('induced_inflow_reason', 'in_plane_induced_convergence_reason'),
@@ -3244,7 +3338,8 @@ def report_transition_csvs(result, checkpoints, audit_path):
         ('phase1_calibration', 'rotor_calibration'),
         ('in_plane_assumptions', 'in_plane_state_assumptions'),
     )
-    rotor_fields = ('phase2_time_s', 'rotor_side', 'rotor_model', *(name for name, _ in rotor_columns),
+    rotor_fields = ('phase2_time_s', 'rotor_side', 'rotor_model', 'trajectory_status', 'trajectory_source',
+                    *(name for name, _ in rotor_columns),
                     'advance_ratio', 'advance_ratio_status', 'advance_ratio_source',
                     'c_rf', 'c_rf_status', 'c_rf_source', 'c_rf_reason', 'rotor_flow_source',
                     'rotor_flow_assumptions', 'first_missing_in_plane_input', 'unresolved_in_plane_inputs',
@@ -3257,7 +3352,8 @@ def report_transition_csvs(result, checkpoints, audit_path):
             first_missing_input = (missing_in_plane.partition('; ')[0]
                                    if None in (selected['mast_h_n'], selected['mast_y_n']) else '')
             rotor_rows.append(dict(selected, phase2_time_s=row['phase2_time_s'], rotor_side=side,
-                                   rotor_model=row['rotor_model'], advance_ratio=row.get(f'mu_{side}'),
+                                   rotor_model=row['rotor_model'], trajectory_status=row['trajectory_status'],
+                                   trajectory_source=row['trajectory_source'], advance_ratio=row.get(f'mu_{side}'),
                                    advance_ratio_status=row.get(f'{side}_advance_ratio_status'),
                                    advance_ratio_source=row.get(f'{side}_advance_ratio_source'),
                                    c_rf=row.get(f'c_rf_{side}'), c_rf_status=row.get(f'{side}_force_coefficient_status'),
@@ -3271,7 +3367,8 @@ def report_transition_csvs(result, checkpoints, audit_path):
     write_transition_report(report_dir / 'stage2_rotors.csv', rotor_fields, rotor_rows)
 
     aero_fields = (
-        'phase2_time_s', 'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_relative_velocity_status',
+        'phase2_time_s', 'trajectory_status', 'trajectory_source',
+        'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_relative_velocity_status',
         'air_density_kg_m3', 'air_density_status', 'pitch_attitude_deg', 'pitch_attitude_status',
         'gamma_deg', 'gamma_status', 'fuselage_alpha_deg', 'fuselage_alpha_status',
         'rotor_flow_correction_deg', 'rotor_flow_correction_status',
@@ -3286,7 +3383,9 @@ def report_transition_csvs(result, checkpoints, audit_path):
 
 def report_final_state(transition, takeoff):
     state = transition['final_state'] if transition['elapsed_s'] > 0 else initialize_transition(takeoff)
-    if transition['elapsed_s'] > 0:
+    if transition['elapsed_s'] > 0 and transition.get('prescribed'):
+        phase = 'PHASE 2 (PRESCRIBED KINEMATIC DEMONSTRATION)'
+    elif transition['elapsed_s'] > 0:
         phase = 'PHASE 2 (ILLUSTRATIVE DEMONSTRATION)'
     elif takeoff['elapsed_s'] > 0:
         phase = 'PHASE 1 (RETAINED STATE)'
@@ -3603,6 +3702,16 @@ def report_takeoff_summary(result, duration_s):
               motion['vertical_acceleration_mps2'])
     print_report_table(('Mass (kg)', 'AIRCRAFT WEIGHT (N)', 'Rotor up (N)', 'Net up (N)', 'Accel up (m/s²)'),
                        [tuple(map(report_cell, values))])
+    comparisons = []
+    for side in ('left', 'right'):
+        ct = result[side].get('thrust_coefficient')
+        status = cr177436_hover_ct_comparison(ct)
+        if status.startswith('ABOVE'):
+            comparisons.append(f'{side} C_T={ct:g} ({status.lower()})')
+    if comparisons:
+        print('CR-177436 isolated metal-blade hover comparison — ' + ', '.join(comparisons))
+        print(f'Reported alternating loads rose above C_T={HOVER_CT_ALTERNATING_LOAD_ONSET:g}. '
+              f'Suggested hover maximum C_T≈{HOVER_CT_SUGGESTED_MAXIMUM:g} is specific to the hover evidence.')
     if motion['status'] != 'CALCULATED':
         print(f"Phase 1 blocker — {balance['reason']}.")
         if result['elapsed_s'] == 0:
@@ -3740,6 +3849,12 @@ def main(argv=None):
                         help='nose-up-positive pitch for Phase 2 body-axis airflow and NASA wing AoA')
     parser.add_argument('--transition-end', metavar='LEFT:RIGHT',
                         help='ending nacelle angles in degrees, default 0:0')
+    parser.add_argument('--transition-kinematic', metavar='FORWARD:UP',
+                        help='run the full Phase 2 schedule with explicit constant velocities in m/s')
+    parser.add_argument('--transition-start-height-m', type=float, metavar='METERS',
+                        help='prescribed kinematic start height AGL, default retained Phase 1 height')
+    parser.add_argument('--trim-benchmark', action='store_true',
+                        help='compare the standalone TR-1195-1 p. A-31 trim point')
     wing_model = parser.add_mutually_exclusive_group()
     wing_model.add_argument('--transition-polar', type=Path, help='wing coefficient CSV with header alpha_deg,cl,cd')
     wing_model.add_argument('--illustrative-transition', action='store_true',
@@ -3760,6 +3875,12 @@ def main(argv=None):
     parser.add_argument('--nacelle-schedule', nargs='+', default=[],
                         metavar='LEFT:RIGHT', help='untimed illustrative angle pairs in degrees; provisional range 0–90')
     args = parser.parse_args(argv)
+    if args.trim_benchmark:
+        benchmark = runpy.run_path(str(PROJECT_DIR / 'xv15_trim_benchmark.py'))
+        benchmark['report_xv15_trim_benchmark'](Aircraft(), XV15RotorInputs, XV15RotorOperatingPoint,
+                                                XV15InPlaneState, calculate_xv15_rotor_flow, XV15_LATERAL_MAST_TILT_DEG,
+                                                XV15_MAST_TILT_SOURCE)
+        return
     cli_audit = {}
     for key, option, value in (
         ('rotor_model', '--rotor-model', args.rotor_model),
@@ -3777,6 +3898,15 @@ def main(argv=None):
     cli_audit.update(timestep_s=args.dt, transition_end_deg=args.transition_end,
                      heading_status='DEFAULTED', heading_source='TMPE AircraftState default yaw (north)')
     try:
+        prescribed_velocity = None
+        if args.transition_kinematic is not None:
+            prescribed_velocity = tuple(map(float, args.transition_kinematic.split(':')))
+            if len(prescribed_velocity) != 2 or not all(map(math.isfinite, prescribed_velocity)):
+                raise ValueError('--transition-kinematic requires two finite velocities as FORWARD:UP in m/s')
+        if args.transition_start_height_m is not None:
+            if prescribed_velocity is None:
+                raise ValueError('--transition-start-height-m requires --transition-kinematic')
+            require_finite('--transition-start-height-m', args.transition_start_height_m, 0)
         angle_pairs = [tuple(map(float, pair.split(':'))) for pair in args.nacelle_schedule]
         end_angles = tuple(map(float, args.transition_end.split(':')))
         for pair in [*angle_pairs, end_angles]:
@@ -3894,10 +4024,15 @@ def main(argv=None):
     if isinstance(polar, XV15WingPylonPolar):
         rotor_input_mode = 'illustrative' if args.illustrative_rotor_flow else 'planar'
 
-    transition = simulate_transition(result, aircraft, environment, polar, phase2_duration, args.dt, end_angles,
-                                     pitch_attitude_deg=args.transition_pitch_deg,
-                                     illustrative_rotor_flow=args.illustrative_rotor_flow,
-                                     heading_deg=math.degrees(state.yaw))
+    try:
+        transition = simulate_transition(result, aircraft, environment, polar, phase2_duration, args.dt, end_angles,
+                                         pitch_attitude_deg=args.transition_pitch_deg,
+                                         illustrative_rotor_flow=args.illustrative_rotor_flow,
+                                         heading_deg=math.degrees(state.yaw),
+                                         prescribed_velocity_mps=prescribed_velocity,
+                                         prescribed_start_height_m=args.transition_start_height_m)
+    except ValueError as exc:
+        parser.error(str(exc))
     audit_rows = transition['rows'] or [transition['preflight_audit']]
     for row in audit_rows:
         row.update(cli_audit)
@@ -3916,7 +4051,8 @@ def main(argv=None):
         report_data_status(result, transition, aircraft, polar)
         report_inputs_and_assumptions(transition)
         print('\nTRANSITION EQUATIONS')
-        report_transition_equations(simplified=polar is None, nasa=isinstance(polar, XV15WingPylonPolar))
+        report_transition_equations(simplified=polar is None, nasa=isinstance(polar, XV15WingPylonPolar),
+                                    prescribed=transition['prescribed'])
     if args.ideal_rated_hover:
         report_rated_ideal_hover(aircraft, environment)
     if args.diagnostics or args.verbose:

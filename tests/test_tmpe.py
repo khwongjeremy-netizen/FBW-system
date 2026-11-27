@@ -1078,6 +1078,52 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(first['body_v_mps'], 0)
         self.assertIn('--transition-pitch-deg', first['aero_reason'])
 
+    def test_prescribed_phase2_reaches_requested_end_with_unavailable_forces(self):
+        takeoff = tmpe.simulate_takeoff(self.aircraft, self.environment, 1, .1, rotor_model='unsupported')
+        strict = tmpe.simulate_transition(takeoff, self.aircraft, self.environment, self.polar, 10, .3, (0, 20))
+        self.assertEqual(strict['elapsed_s'], 0)
+        self.assertEqual(strict['status'], 'UNAVAILABLE')
+
+        prescribed = tmpe.simulate_transition(takeoff, self.aircraft, self.environment, self.polar, 10, .3, (0, 20),
+                                             prescribed_velocity_mps=(25, 1), prescribed_start_height_m=20)
+        self.assertEqual(prescribed['status'], 'PRESCRIBED')
+        self.assertEqual(prescribed['elapsed_s'], 10)
+        self.assertEqual(prescribed['final_state'].forward_distance_m, 250)
+        self.assertEqual(prescribed['final_state'].height_agl_m, 30)
+        final = prescribed['rows'][-1]
+        self.assertEqual((final['left_nacelle_deg'], final['right_nacelle_deg']), (0, 20))
+        self.assertEqual(final['phase2_force_balance_role'], 'DIAGNOSTIC ONLY')
+        self.assertEqual(final['force_balance_status'], 'UNAVAILABLE')
+        self.assertIsNone(final['net_up_n'])
+        self.assertIsNone(final['left_rotor_h_n'])
+        self.assertIsNone(final['pitch_attitude_deg'])
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+            audit_path = Path(folder) / 'audit.csv'
+            tmpe.report_timed_transition(prescribed, audit_path)
+            with (Path(folder) / 'audit_reports' / 'stage2_checkpoints.csv').open(newline='') as stream:
+                checkpoints = list(csv.DictReader(stream))
+        self.assertEqual(float(checkpoints[-1]['phase2_time_s']), 10)
+        self.assertEqual(checkpoints[-1]['phase2_status'], 'PRESCRIBED')
+        self.assertEqual(checkpoints[-1]['net_up_n'], '')
+
+    def test_a31_benchmark_distinguishes_reference_normalization_and_missing_forces(self):
+        benchmark = tmpe.runpy.run_path(str(tmpe.PROJECT_DIR / 'xv15_trim_benchmark.py'))
+        result = benchmark['evaluate_xv15_trim_benchmark'](
+            self.aircraft, tmpe.XV15RotorInputs, tmpe.XV15RotorOperatingPoint, tmpe.XV15InPlaneState,
+            tmpe.calculate_xv15_rotor_flow, tmpe.XV15_LATERAL_MAST_TILT_DEG, tmpe.XV15_MAST_TILT_SOURCE,
+        )
+        left = {row['quantity']: row for row in result['rows'] if row['side'] == 'left'}
+        self.assertAlmostEqual(left['shaft tip speed (ft/s)']['calculated'], 771, places=2)
+        self.assertEqual(left['advancing tip speed (ft/s)']['printed'], '902.1')
+        self.assertAlmostEqual(left['advancing tip speed (ft/s)']['difference'], 0, delta=.05)
+        self.assertAlmostEqual(left['advance ratio']['difference'], 0, delta=.0001)
+        self.assertAlmostEqual(left['total inflow ratio']['difference'], 0, delta=.0001)
+        self.assertAlmostEqual(left['axial thrust (lbf)']['difference'], 0, delta=.5)
+        self.assertIsNone(left['mast H (lbf)']['calculated'])
+        self.assertIsNone(left['mast Y (lbf)']['calculated'])
+        self.assertIsNone(left['C_RF']['printed'])
+        self.assertGreater(left['C_RF']['calculated'], left['CT']['calculated'])
+
     def test_illustrative_flow_advances_only_with_wing_table_coverage(self):
         result = self.transition(pitch_attitude_deg=10, illustrative_rotor_flow=True)
         self.assertEqual(result['status'], 'CALCULATED')
@@ -1096,9 +1142,12 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertIsNotNone(no_coverage['rows'][0]['wing_alpha_deg'])
         self.assertIsNone(no_coverage['rows'][0]['cl'])
         self.assertIsNone(no_coverage['rows'][0]['net_up_n'])
+        self.assertIn('no uniquely defined AoA rows', no_coverage['reason'])
 
         self.assertIsNotNone(self.polar.evaluate(60, 0, .05)[0])
-        self.assertIsNone(self.polar.evaluate(60, 4, .05)[0])
+        coefficients, reason = self.polar.evaluate(60, 4, .05)
+        self.assertIsNone(coefficients)
+        self.assertIn('defined AoA span', reason)
 
     def test_complete_mast_force_components_feed_wing_correction(self):
         left = tmpe.XV15RotorOperatingPoint(565, 30000, 3000, -4000)

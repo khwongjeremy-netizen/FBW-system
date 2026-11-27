@@ -4,7 +4,7 @@ Educational Python project exploring XV-15 vertical takeoff and nacelle transiti
 
 - **Built:** Cited XML aircraft data, vertical force balance, ground support and time integration with supplied forces.
 - **In progress:** Aircraft-specific rotor thrust modeling; takeoff simulation remains blocked by missing data and operating inputs.
-- **Scope:** Vertical takeoff followed by a level, two-dimensional transition with supplied wing coefficients.
+- **Scope:** Vertical takeoff followed by a fixed-heading planar transition, with force-based and prescribed motion modes.
 - **Validation:** Tests check software and equations; no validated XV-15 trajectory is claimed.
 - **Long-term goal:** Explore flight dynamics and control.
 ## Usage
@@ -21,7 +21,7 @@ python3 -m unittest discover -s tests -v
 - The five environmental prompts have defaults. Enter separate positive durations for takeoff and transition, or supply both duration flags.
 - Normal output shows run inputs, Phase 1 forces, up to five Phase 2 checkpoints, the final state and data blockers. The Phase 2 audit CSV retains every evaluated timestep.
 - Diagnostics shows XML loading records and force-model blockers. Verbose adds equations and the secondary freestream AoA trace. Flags can be combined.
-- Duration and timestep are requested settings; missing forces stop the run without advancing time. Initial zero height/velocity are identified as initial conditions.
+- Strict Phase 2 stops when required forces are unavailable. Use `--transition-kinematic FORWARD:UP` with explicit velocities in m/s for a full-duration schedule demonstration. Use `--trim-benchmark` for the separate GTRS trim comparison. [Phase 2 data and assumptions](docs/PHASE2_DATA_AND_ASSUMPTIONS.md)
 
 ## Architecture
 
@@ -55,7 +55,7 @@ flowchart TD
 - The reported 7% OGE hover download is not applied to ground liftoff. Ground effect, wake download and climb/drag loads need applicable models.
 - Ideal hover momentum theory alone cannot establish actual mast power, losses, collective or a thrust law valid through ground liftoff and climb. No ideal estimate is substituted for actual thrust.
 - `LOADED` means parsing succeeded; it does not certify aircraft data. Unknown values remain `None`.
-- The timed transition assumes a level aircraft and holds Phase 1 rotor thrust magnitudes fixed. See the [transition guide](docs/TMPE_TRANSITION.md) for the coefficient input, force equations and audit.
+- The timed transition uses a fixed-heading plane and holds any Phase 1 axial thrust fixed. The NASA airflow path takes a prescribed pitch. See the [transition guide](docs/TMPE_TRANSITION.md) for the coefficient input, force equations and audit.
 - Tests verify equations and software behavior, not agreement with XV-15 flight-test thrust or trajectories.
 
 ## References and maintenance

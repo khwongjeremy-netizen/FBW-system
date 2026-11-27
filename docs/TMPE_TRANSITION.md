@@ -1,8 +1,8 @@
 # TMPE Phase 2 timed transition
 
-Phase 2 starts at the last Phase 1 state. Altitude is above ground, up velocity
-carries over, and forward distance and speed start at zero because Phase 1 is
-vertical. An airborne Phase 1 result is required. Each stage has its own positive
+Strict Phase 2 starts at the last airborne Phase 1 state. Altitude is above
+ground, up velocity carries over, and forward distance and speed start at zero
+because Phase 1 is vertical. Each stage has its own positive
 duration prompt, with equivalent CLI flags for scripted runs. The shared
 `--dt` defaults to 0.1 seconds. A final step can be shorter.
 
@@ -25,6 +25,15 @@ when a required in-plane force `H` or `Y` is unavailable. Add
 wing AoA correction. The lookup still requires the report's table coverage.
 For a software-only run of the older constant-coefficient demonstration, add
 `--illustrative-transition`.
+
+For the full-duration prescribed demonstration, supply explicit constant
+forward and up velocities with `--transition-kinematic FORWARD:UP` (m/s).
+`--transition-start-height-m` can set the starting AGL independently of
+Phase 1. The linear nacelle schedule and clock advance to the requested
+endpoint. Available forces remain diagnostic and missing fields stay blank.
+`--trim-benchmark` runs the separate TR-1195-1 A-31 comparison. See the
+[data and assumptions ledger](PHASE2_DATA_AND_ASSUMPTIONS.md) for examples,
+normalizations and the outstanding evidence.
 
 The separate
 `--nacelle-schedule 90:90 45:45 0:0` option still prints untimed geometric

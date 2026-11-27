@@ -1,4 +1,4 @@
-# TMPE aerodynamic data gaps: research handoff for ChatGPT
+# TMPE aerodynamic data gaps: 
 
 Prepared 7 November 2026 from the current repository. This report is self-contained so it can be uploaded to another ChatGPT conversation. File paths are relative to the repository root; line numbers identify the inspected snapshot and may move after edits.
 
