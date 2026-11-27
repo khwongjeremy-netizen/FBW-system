@@ -2319,47 +2319,77 @@ AIRCRAFT_TRANSITION_BLOCKER = (
 )
 
 
-def report_timed_transition(result, audit_path=None):
-    print('\nPHASE 2 — TIMED TRANSITION')
-    print('XV-15 aircraft transition: UNAVAILABLE.')
-    simplified = result['simplified']
-    if simplified:
-        print(SIMPLIFIED_TRANSITION_LABEL)
-        print('ILLUSTRATIVE / SOFTWARE-TEST ASSUMPTIONS')
-        for label, value in (('CL', SIMPLIFIED_TRANSITION_CL), ('CD', SIMPLIFIED_TRANSITION_CD)):
-            print(f'  Constant wing {label} = {format_quantity(value, "dimensionless")}')
-        print('  Rotor thrust held at the selected Phase 1 model values throughout the transition.')
-        print('  Level attitude assumed. Rotor inflow, power-limited thrust and ground effect are excluded.')
-    rows = result['rows']
-    status = result['status']
-    if simplified:
-        status = f'ILLUSTRATIVE / {status}'
-    elif rows and rows[0].get('rotor_flow_assumptions'):
-        status = f'{ILLUSTRATIVE_ROTOR_FLOW} / {status}'
-    print(f"Phase 2 demonstration status: {status} — {result['reason']}")
-    print(f"Phase 2 elapsed: {result['elapsed_s']:.6g} / {result['requested_s']:.6g} s")
+def report_cell(value):
+    return '' if value is None else format(value, '.4g')
+
+
+def print_report_table(headers, rows):
+    table = (headers, *rows)
+    widths = [max(map(len, column)) for column in zip(*table)]
+    for row in table:
+        print('  '.join(cell.rjust(width) for cell, width in zip(row, widths)).rstrip())
+
+
+def transition_checkpoints(rows):
     if not rows:
-        if 'preflight_audit' in result:
-            write_transition_audit([result['preflight_audit']], audit_path)
-        return
-
-    report_transition_checkpoints(rows)
-    write_transition_audit(rows, audit_path)
-
-
-def report_transition_checkpoints(rows):
-    print('ILLUSTRATIVE / SOFTWARE-TEST ONLY — not validated XV-15 flight performance.')
-    print('Checkpoints: start, every 2.5 s, end; nearest evaluated timesteps, no interpolation.')
-    print('Forward and upward values are positive in their named directions.')
+        return []
     last_time = rows[-1]['phase2_time_s']
     targets = [2.5 * step for step in range(1, math.ceil(last_time / 2.5))]
     indices = [0, *(min(range(len(rows)), key=lambda i: abs(rows[i]['phase2_time_s'] - target))
                     for target in targets), len(rows) - 1]
-    checkpoints = [rows[i] for i in sorted(set(indices))]
+    return [rows[i] for i in sorted(set(indices))]
+
+
+def compact_aero_reason(row):
+    details = row.get('wing_alpha_missing_inputs')
+    if not details:
+        return row['aero_reason']
+    missing = [label for key, label in (
+        ('pitch_attitude_status', 'prescribed pitch (--transition-pitch-deg)'),
+        ('beta_m_status', 'a common mast angle'),
+        ('gamma_status', 'a flight-path angle'),
+        ('rotor_flow_status', 'complete rotor-flow inputs'),
+    ) if row.get(key) == 'UNAVAILABLE']
+    if missing:
+        return 'NASA-corrected wing AoA requires ' + ', '.join(missing)
+    return 'NASA-corrected wing AoA unavailable. Missing or invalid ' + details.split(', ', 1)[0]
+
+
+def report_timed_transition(result, audit_path=None, *, verbose=False):
+    print('\nPHASE 2 — TIMED TRANSITION')
+    rows = result['rows']
+    checkpoints = transition_checkpoints(rows)
+    print(f"Phase 2 elapsed: {result['elapsed_s']:.6g} / {result['requested_s']:.6g} s")
+    status, reason = result['status'], result['reason']
+    if not verbose and rows and rows[-1]['aero_reason']:
+        reason = reason.replace(rows[-1]['aero_reason'], compact_aero_reason(rows[-1]), 1)
+    print(f'Phase 2 demonstration — ILLUSTRATIVE / {status}')
+    if reason:
+        label = 'Blocker' if status == 'UNAVAILABLE' else 'Outcome'
+        print(f'{label} — {reason}')
+    if checkpoints:
+        print('\nPHASE 2 CHECKPOINTS')
+        print('Start, every 2.5 s, and end, using nearest evaluated timesteps.')
+        columns = (('t (s)', 'phase2_time_s'), ('Nac L (deg)', 'left_nacelle_deg'),
+                   ('Nac R (deg)', 'right_nacelle_deg'), ('AGL (m)', 'height_agl_m'),
+                   ('Fwd (m/s)', 'forward_velocity_mps'), ('Up (m/s)', 'vertical_velocity_mps'),
+                   ('Lift (N)', 'lift_n'), ('Drag (N)', 'drag_n'), ('Net up (N)', 'net_up_n'))
+        print_report_table([label for label, _ in columns],
+                           [tuple(report_cell(row.get(key)) for _, key in columns) for row in checkpoints])
+        if verbose:
+            report_transition_checkpoint_details(checkpoints)
+    else:
+        print('Phase 2 checkpoints — NOT EVALUATED')
+    print('\nCSV OUTPUTS')
+    report_transition_csvs(result, checkpoints, audit_path)
+
+
+def report_transition_checkpoint_details(checkpoints):
+    print('Forward and upward values are positive in their named directions.')
 
     def number(value):
         if value is None or value == '':
-            return '—'
+            return ''
         if value == 0:
             return '0'
         text = format(value, '.3g')
@@ -2401,7 +2431,7 @@ def report_transition_checkpoints(rows):
         ('Net up (N)', field('net_up_n')),
         ('a up (m/s²)', field('vertical_acceleration_mps2')),
     ))
-    nasa = 'wing_pylon_lookup_status' in rows[0]
+    nasa = 'wing_pylon_lookup_status' in checkpoints[0]
     aoa_columns = (
         ('t (s)', field('phase2_time_s')),
         ('Air fwd (m/s)', field('air_forward_mps')),
@@ -2428,7 +2458,7 @@ def report_transition_checkpoints(rows):
         ('Tilt L/R (deg)' if asymmetric else 'Tilt (deg)', angle),
     )
     if nasa:
-        first = rows[0]
+        first = checkpoints[0]
         print(f'NASA flap/flaperon setting: {first["flap_deg"]:g}°/{first["flaperon_deg"]:g}° throughout Phase 2.')
         lookup_columns += (('Requested mast (deg)', field('beta_m_deg')),
                            ('Table mast (deg)', field('table_mast_deg')), ('Mach', field('mach')))
@@ -2458,7 +2488,7 @@ def report_transition_checkpoints(rows):
         print('Wing coefficient source: ' + source)
     if nasa:
         print('The NASA p. 25 correction applies to freestream AoA. Wake-immersed wing loads are outside this model.')
-    print('Tilt = nacelle direction; L/R = left/right when different. — = unavailable, not zero.')
+    print('Tilt is the nacelle direction. L/R shows both sides when they differ.')
     print('Lift is wing lift magnitude; net upward force uses the modeled vertical components.')
     for status in dict.fromkeys(row['aero_status'] for row in checkpoints):
         print('Wing model status: ' + status)
@@ -2644,6 +2674,7 @@ def write_transition_audit(rows, audit_path):
     ordered = [key for group in numeric_groups for key in group if key in fields]
     # Preserve every status/source/validation field, including future additions.
     fieldnames = ordered + [key for key in fields if key not in ordered]
+    output_path = None
     try:
         if audit_path is None:
             output_dir = Path('output')
@@ -2652,6 +2683,7 @@ def write_transition_audit(rows, audit_path):
                 dir=output_dir, prefix='stage2_audit_', suffix='.csv', delete=False)
         else:
             stream = audit_path.open('x', newline='', encoding='utf-8')
+        output_path = Path(stream.name)
         with stream:
             writer = csv.DictWriter(stream, fieldnames=fieldnames)
             writer.writeheader()
@@ -2660,12 +2692,121 @@ def write_transition_audit(rows, audit_path):
                  and not isinstance(value, bool) else value
                  for key, value in row.items()}
                 for row in rows)
-        audit_display = Path(stream.name)
-        if audit_display.is_absolute():
-            audit_display = audit_display.name
-        print(f'Stage 2 audit CSV ({len(rows)} rows): {audit_display}')
+        print(f'Stage 2 audit CSV ({len(rows)} rows): {output_path}')
     except OSError as exc:
-        print(f'Stage 2 audit CSV UNAVAILABLE — {exc.strerror or type(exc).__name__}')
+        print(f'Stage 2 audit CSV UNAVAILABLE — {exc.filename or output_path or audit_path or Path("output")}'
+              f' — {exc.strerror or type(exc).__name__}')
+    return output_path
+
+
+def write_transition_report(path, fieldnames, rows):
+    try:
+        with path.open('x', newline='', encoding='utf-8') as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                values = {key: row.get(key) for key in fieldnames}
+                # Keep exact time keys so the three reports can be joined on time.
+                writer.writerow({key: format(value, '.8g') if isinstance(value, float) and not key.endswith('_time_s')
+                                 else value for key, value in values.items()})
+        print(f'Stage 2 report CSV ({len(rows)} rows): {path}')
+    except OSError as exc:
+        print(f'Stage 2 report CSV UNAVAILABLE — {path} — {exc.strerror or type(exc).__name__}')
+
+
+def report_transition_csvs(result, checkpoints, audit_path):
+    rows = result['rows']
+    if not rows and 'preflight_audit' not in result:
+        return
+    output_path = write_transition_audit(rows or [result['preflight_audit']], audit_path)
+    run_path = output_path or audit_path
+    report_parent = run_path.parent if run_path is not None else Path('output')
+    try:
+        if output_path is None:
+            # A failed audit open can leave the requested name belonging to an earlier run.
+            report_dir = Path(tempfile.mkdtemp(dir=report_parent, prefix='stage2_reports_'))
+        else:
+            report_dir = output_path.with_name(f'{output_path.stem}_reports')
+            report_dir.mkdir()
+    except OSError as exc:
+        print(f'Stage 2 report CSVs UNAVAILABLE — {exc.filename or report_parent}'
+              f' — {exc.strerror or type(exc).__name__}')
+        return
+
+    checkpoint_fields = (
+        'phase2_time_s', 'simulation_time_s', 'height_agl_m', 'forward_distance_m',
+        'forward_velocity_mps', 'vertical_velocity_mps', 'left_nacelle_deg', 'right_nacelle_deg',
+        'airspeed_mps', 'left_thrust_n', 'right_thrust_n', 'total_rotor_forward_n', 'total_rotor_up_n',
+        'lift_n', 'drag_n',
+        'wing_forward_n', 'wing_up_n',
+        'aircraft_weight_n', 'net_forward_n', 'net_up_n',
+        'forward_acceleration_mps2', 'vertical_acceleration_mps2',
+        'phase2_status', 'phase2_reason', 'aero_status', 'aero_reason',
+        'trajectory_status', 'aircraft_transition_status',
+    )
+    companion_rows = []
+    for row in checkpoints:
+        aero_reason = compact_aero_reason(row)
+        if row is rows[-1]:
+            status, reason = result['status'], result['reason']
+            if aero_reason != row['aero_reason']:
+                reason = reason.replace(row['aero_reason'], aero_reason, 1)
+        else:
+            forces_available = None not in (row['forward_acceleration_mps2'], row['vertical_acceleration_mps2'])
+            status = 'CALCULATED' if forces_available else 'UNAVAILABLE'
+            reason = aero_reason
+        companion_rows.append(dict(row, phase2_status=status, phase2_reason=reason,
+                                   aero_reason=aero_reason, requested_mast_deg=row.get('beta_m_deg'),
+                                   requested_mast_status=row.get('beta_m_status')))
+    write_transition_report(report_dir / 'stage2_checkpoints.csv', checkpoint_fields, companion_rows)
+
+    rotor_columns = (
+        ('nacelle_deg', 'nacelle_deg'), ('mast_angle_deg', 'beta_m_deg'),
+        ('rotor_rpm', 'rotor_rpm'), ('rotor_rpm_status', 'rotor_rpm_status'),
+        ('rotor_rpm_source', 'rotor_rpm_source'),
+        ('mast_t_n', 'rotor_t_n'), ('mast_t_status', 'rotor_t_status'), ('mast_t_source', 'rotor_t_source'),
+        ('mast_h_n', 'rotor_h_n'), ('mast_h_status', 'rotor_h_status'), ('mast_h_source', 'rotor_h_source'),
+        ('mast_y_n', 'rotor_y_n'), ('mast_y_status', 'rotor_y_status'), ('mast_y_source', 'rotor_y_source'),
+        ('rotor_force_status', 'rotor_force_status'),
+        ('held_phase1_thrust_n', 'thrust_n'), ('held_thrust_status', 'rotor_status'),
+        ('projected_forward_n', 'rotor_forward_n'), ('projected_up_n', 'rotor_up_n'),
+        ('phase1_ct', 'thrust_coefficient'), ('phase1_ct_status', 'ct_status'), ('phase1_ct_source', 'ct_source'),
+        ('phase1_calibration', 'rotor_calibration'),
+    )
+    rotor_fields = ('phase2_time_s', 'rotor_side', 'rotor_model', *(name for name, _ in rotor_columns),
+                    'advance_ratio', 'advance_ratio_status', 'advance_ratio_source',
+                    'c_rf', 'c_rf_status', 'c_rf_source', 'rotor_flow_source',
+                    'first_missing_in_plane_input', 'rotor_flow_input_note')
+    rotor_rows = []
+    for row in checkpoints:
+        for side in ('left', 'right'):
+            selected = {name: row.get(f'{side}_{key}') for name, key in rotor_columns}
+            missing_in_plane = row.get(f'{side}_nasa_in_plane_missing_inputs', '')
+            first_missing_input = (missing_in_plane.partition('; ')[0]
+                                   if None in (selected['mast_h_n'], selected['mast_y_n']) else '')
+            rotor_rows.append(dict(selected, phase2_time_s=row['phase2_time_s'], rotor_side=side,
+                                   rotor_model=row['rotor_model'], advance_ratio=row.get(f'mu_{side}'),
+                                   advance_ratio_status=row.get(f'{side}_advance_ratio_status'),
+                                   advance_ratio_source=row.get(f'{side}_advance_ratio_source'),
+                                   c_rf=row.get(f'c_rf_{side}'), c_rf_status=row.get(f'{side}_force_coefficient_status'),
+                                   c_rf_source=row.get(f'{side}_force_coefficient_source'),
+                                   rotor_flow_source=row.get('rotor_flow_source'),
+                                   first_missing_in_plane_input=first_missing_input,
+                                   rotor_flow_input_note=row.get('rotor_flow_input_note')))
+    write_transition_report(report_dir / 'stage2_rotors.csv', rotor_fields, rotor_rows)
+
+    aero_fields = (
+        'phase2_time_s', 'air_forward_mps', 'air_up_mps', 'airspeed_mps', 'air_relative_velocity_status',
+        'air_density_kg_m3', 'air_density_status', 'pitch_attitude_deg', 'pitch_attitude_status',
+        'gamma_deg', 'gamma_status', 'fuselage_alpha_deg', 'fuselage_alpha_status',
+        'rotor_flow_correction_deg', 'rotor_flow_correction_status',
+        'wing_alpha_deg', 'wing_alpha_status', 'requested_mast_deg', 'requested_mast_status', 'table_mast_deg',
+        'flap_deg', 'flaperon_deg', 'transition_flaps_status', 'mach',
+        'cl', 'cd', 'q_pa', 'aero_reference_area_m2', 'lift_n', 'drag_n',
+        'wing_forward_n', 'wing_up_n', 'wing_pylon_lookup_status',
+        'aero_status', 'aero_reason', 'aero_source', 'aero_user_source', 'aero_validation',
+    )
+    write_transition_report(report_dir / 'stage2_aero.csv', aero_fields, companion_rows)
 
 
 def report_final_state(transition, takeoff):
@@ -2677,13 +2818,10 @@ def report_final_state(transition, takeoff):
     else:
         phase = 'PHASE 1 (INITIAL STATE RETAINED)'
     print(f'\nFINAL STATE — {phase}')
-    for label, value, unit in (
-        ('HEIGHT ABOVE GROUND', state.height_agl_m, 'm'),
-        ('FORWARD DISTANCE', state.forward_distance_m, 'm'),
-        ('FORWARD VELOCITY', state.forward_velocity_mps, 'm/s'),
-        ('VERTICAL VELOCITY', state.vertical_velocity_mps, 'm/s'),
-    ):
-        print(f'{label:<23}: {format_quantity(value, unit)}')
+    values = (state.height_agl_m, state.forward_distance_m, state.forward_velocity_mps,
+              state.vertical_velocity_mps)
+    print_report_table(('AGL (m)', 'Distance (m)', 'Fwd (m/s)', 'Up (m/s)'),
+                       [tuple(map(report_cell, values))])
 
 
 def sample_nacelle_transition(takeoff_result, angle_pairs):
@@ -2959,6 +3097,94 @@ def report_takeoff_diagnostics(result, verbose=False):
         print('  No OGE 7% download or reported 93% efficiency is silently applied to runway liftoff.')
 
 
+def report_run_summary(transition, takeoff, end_angles):
+    row = transition['rows'][0] if transition['rows'] else transition['preflight_audit']
+    print('\nRUN SUMMARY')
+    print('XV-15 helicopter-mode vertical takeoff and timed nacelle transition. Flight validation — UNVALIDATED.')
+    print(f"Rotor model — {takeoff['rotor_model']} ({row['rotor_model_status']})")
+    if takeoff['rotor_model'] == 'prototype-fixed-ct':
+        print(PROTOTYPE_LABEL)
+    print(f"Timestep — {row['timestep_s']:g} s ({row['timestep_status']}) | "
+          f"Target nacelles — {end_angles[0]:g}° L / {end_angles[1]:g}° R ({row['transition_end_status']})")
+    inputs = (
+        ('Air density (kg/m³)', 'air_density_kg_m3', 'air_density_status'),
+        ('Wind speed (m/s)', 'wind_speed_mps', 'wind_speed_status'),
+        ('Wind FROM (° true)', 'wind_from_deg', 'wind_from_status'),
+        ('Temperature (°C)', 'temperature_c', 'temperature_status'),
+    )
+    print_report_table(('Input', 'Value', 'Status'),
+                       [(label, report_cell(row[key]), row[status]) for label, key, status in inputs])
+    print('Blank table cells indicate unavailable values.')
+
+
+def report_takeoff_summary(result, duration_s):
+    balance, motion = result['balance'], result['motion']
+    print('\nPHASE 1 — HELICOPTER TAKEOFF')
+    print(f"Phase 1 elapsed: {result['elapsed_s']:.6g} / {duration_s:.6g} s")
+    print(f"TAKEOFF STATUS         : {motion['takeoff_status']}")
+    print(f"Vertical force balance — {balance['status']}")
+    values = (result['takeoff_mass_kg'], balance.get('aircraft_weight_n'),
+              balance.get('total_rotor_vertical_force_n'), balance.get('net_vertical_force_n'),
+              motion['vertical_acceleration_mps2'])
+    print_report_table(('Mass (kg)', 'AIRCRAFT WEIGHT (N)', 'Rotor up (N)', 'Net up (N)', 'Accel up (m/s²)'),
+                       [tuple(map(report_cell, values))])
+    if motion['status'] != 'CALCULATED':
+        print(f"Phase 1 blocker — {balance['reason']}.")
+        if result['elapsed_s'] == 0:
+            print('Phase 1 takeoff not simulated.')
+
+
+def report_status_summary(takeoff, transition, polar):
+    evaluated = transition['rows']
+    row = evaluated[-1] if evaluated else transition['preflight_audit']
+    print('\nROTOR STATUS')
+    rotor_rows = []
+    for side in ('left', 'right'):
+        rotor = takeoff[side]
+        provenance = rotor.get('source_status') or rotor.get('calibration_status') or ''
+        basis = 'ILLUSTRATIVE' if 'ILLUSTRATIVE' in provenance else provenance
+        rotor_rows.append((side.title(), report_cell(rotor['value']), rotor['status'],
+                           report_cell(rotor.get('thrust_coefficient')), rotor.get('ct_status', 'UNAVAILABLE'), basis))
+    print_report_table(('Rotor', 'Phase 1 T (N)', 'Thrust status', 'C_T', 'C_T status', 'Model basis'), rotor_rows)
+    for side in ('left', 'right'):
+        rotor = takeoff[side]
+        if rotor['value'] is None:
+            print(f"{side.title()} thrust blocker — {rotor['reason']}")
+    if not evaluated:
+        print('Phase 2 rotor flow — NOT EVALUATED')
+    elif row.get('rotor_flow_status'):
+        print(f"Phase 2 rotor flow — {row['rotor_flow_status']}")
+        missing = [f'{side.title()} {force.upper()}' for side in ('left', 'right') for force in ('t', 'h', 'y')
+                   if row.get(f'{side}_rotor_{force}_status') == 'UNAVAILABLE']
+        if missing:
+            print('Unavailable mast-axis forces — ' + ', '.join(missing))
+        elif row.get('rotor_flow_assumptions'):
+            print('Phase 2 rotor flow includes illustrative assumptions.')
+
+    print('\nWING/AERO STATUS')
+    if polar is None:
+        print('Coefficients — ILLUSTRATIVE / ASSUMED CONSTANTS')
+    else:
+        print(f'Coefficient source — {Path(polar.source).name} | {polar.status}')
+        if polar.user_source:
+            print(f'User-provided source metadata: {polar.user_source}')
+    if not evaluated:
+        print('Phase 2 wing forces — NOT EVALUATED')
+    else:
+        print(f"Wing forces — {row['aero_status']}")
+        angle = row['wing_alpha_deg']
+        aoa_status = row['wing_alpha_status']
+        print('Wing AoA — ' + (f'{report_cell(angle)}° | ' if angle is not None else '') + aoa_status)
+        if row['aero_reason'] and transition['status'] != 'UNAVAILABLE':
+            print(f'Wing force blocker — {compact_aero_reason(row)}')
+
+    print('\nMODEL LIMITS')
+    print('XV-15 transition performance — UNAVAILABLE. Installed rotor maps and wing wake loads are missing.')
+    print('Phase 1 is vertical only. Phase 2 uses planar motion and holds Phase 1 axial thrust.')
+    print('The model excludes ground effect, rotor RPM response, and wake-immersed wing loads.')
+    print('See the wide audit for per-step sources and blockers. Use --verbose for the detailed terminal report.')
+
+
 def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, end_angles, pitch_attitude_deg=None,
                       *, rotor_input_mode='planar'):
     model = takeoff['rotor_model']
@@ -3010,7 +3236,8 @@ def report_run_inputs(aircraft, environment, takeoff, phase1_s, phase2_s, dt, en
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='TMPE :: XV-15 HELICOPTER TAKEOFF')
-    parser.add_argument('-v', '--verbose', action='store_true', help='show force equations and secondary AoA trace')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='show detailed checkpoints, model inputs, assumptions, equations and secondary AoA trace')
     parser.add_argument('--diagnostics', action='store_true', help='show XML sources and takeoff blockers')
     parser.add_argument('--duration', '--phase1-duration', type=float, help='Phase 1 duration in seconds')
     parser.add_argument('--transition-duration', type=float, help='Phase 2 duration in seconds')
@@ -3172,11 +3399,6 @@ def main(argv=None):
     if isinstance(polar, XV15WingPylonPolar):
         rotor_input_mode = 'illustrative' if args.illustrative_rotor_flow else 'planar'
 
-    report_run_inputs(aircraft, environment, result, phase1_duration, phase2_duration, args.dt, end_angles,
-                      pitch_attitude_deg=args.transition_pitch_deg, rotor_input_mode=rotor_input_mode)
-    print('\nPHASE 1 — HELICOPTER TAKEOFF')
-    report_takeoff(result)
-    print(f"Phase 1 elapsed: {result['elapsed_s']:.6g} / {phase1_duration:.6g} s")
     transition = simulate_transition(result, aircraft, environment, polar, phase2_duration, args.dt, end_angles,
                                      pitch_attitude_deg=args.transition_pitch_deg,
                                      illustrative_rotor_flow=args.illustrative_rotor_flow,
@@ -3184,13 +3406,20 @@ def main(argv=None):
     audit_rows = transition['rows'] or [transition['preflight_audit']]
     for row in audit_rows:
         row.update(cli_audit)
-    report_timed_transition(transition, args.transition_audit)
+    report_run_summary(transition, result, end_angles)
+    report_takeoff_summary(result, phase1_duration)
+    report_timed_transition(transition, args.transition_audit, verbose=args.verbose)
     report_final_state(transition, result)
-    report_xv15_calculations(aircraft, result)
-    report_data_status(result, transition, aircraft, polar)
+    report_status_summary(result, transition, polar)
     if angle_pairs:
         report_transition(sample_nacelle_transition(result, angle_pairs))
     if args.verbose:
+        report_run_inputs(aircraft, environment, result, phase1_duration, phase2_duration, args.dt, end_angles,
+                          pitch_attitude_deg=args.transition_pitch_deg, rotor_input_mode=rotor_input_mode)
+        report_takeoff(result)
+        report_xv15_calculations(aircraft, result)
+        report_data_status(result, transition, aircraft, polar)
+        report_inputs_and_assumptions(transition)
         print('\nTRANSITION EQUATIONS')
         report_transition_equations(simplified=polar is None, nasa=isinstance(polar, XV15WingPylonPolar))
     if args.ideal_rated_hover:
@@ -3207,7 +3436,6 @@ def main(argv=None):
         flow = calculate_aoa(state, environment, aircraft.wing_incidence_deg)
         report_details(environment, aircraft, wing_aerodynamics(flow))
         report_aoa(state, aircraft, flow)
-    report_inputs_and_assumptions(transition)
 
 
 if __name__ == "__main__":

@@ -256,26 +256,38 @@ performance map or establish a validated transition trajectory.
 
 ## Audit
 
-The console shows both stage times and transition checkpoints. Use
-`--verbose` to print the equations. When
-Phase 2 advances no time, the final state is explicitly attributed to Phase 1.
-Audit rows are saved to a unique `output/stage2_audit_*.csv`
-in the working directory. Use `--transition-audit` to choose a new file path.
-The CSV records phase and cumulative times, flow, loads, motion, and per-rotor
-and aerodynamic provenance. It shows air-relative velocity, flight-path
-angle, pitch, and fuselage AoA. Evaluated rows with raw rotor inputs also show body-axis velocity,
-body rates, hub geometry, each rotor's mast angle, body- and mast-axis hub
-velocities, accepted RPM, shaft and corrected rotor speeds, wind azimuth,
-NASA operating inputs and wind-mast forces, selected `T, H, Y`,
-`C_RF`, and per-rotor and mean advance ratios. Status and source fields
-identify the equations and inputs, and missing-input fields explain
-unavailable NASA results. The audit distinguishes any
-coefficient from the selected TMPE rotor model from the CR-177436 hover
-estimate and records source coverage and applicability. Units appear in
-column names where applicable. Blank numerical cells indicate unavailable
-quantities. A blocked Phase 1 handoff produces a preflight-only audit record
-with the blocker and available inputs. The console ends with the inputs,
-assumptions and source limits that affected the calculation.
+The default terminal report shows stage times, transition checkpoints, rotor
+and wing status, model limits, and CSV paths. It highlights the main blockers
+when a stage cannot advance. Use `--verbose` for the longer report and force
+equations, or `--diagnostics` for XML sources and input diagnostics. When
+Phase 2 advances no time, the report attributes the final state to Phase 1.
+
+The full audit uses a unique `output/stage2_audit_*.csv` in the working
+directory. Use `--transition-audit` to provide a new file path. The audit
+keeps every evaluation and its motion, loads, model assumptions, individual
+sources, and missing-input reasons. It includes the body-axis and mast-axis
+details behind the NASA rotor-flow lookup and records the selected TMPE rotor
+coefficient and the CR-177436 hover estimate as separate fields.
+
+Three companion files use fixed names inside a sibling `<audit_stem>_reports/`
+directory. They use the same checkpoints as the console, at the start, every
+2.5 s, and the end, sampled from the nearest evaluated timesteps.
+If the audit path cannot be opened, TMPE attempts to save the companions in a
+separate `stage2_reports_*` directory.
+
+- `stage2_checkpoints.csv` records one row per checkpoint with state, nacelle
+  angles, rotor thrust, wing loads, net forces, and checkpoint status.
+- `stage2_rotors.csv` records one row per rotor per checkpoint with RPM,
+  selected mast-axis `T`, `H`, and `Y`, advance ratio, `C_RF`, source, and
+  status. The held Phase 1 axial thrust has its own column.
+- `stage2_aero.csv` records one row per checkpoint with air-relative state,
+  angles of attack, requested and table mast angle, flap settings, Mach,
+  coefficients, wing loads, and lookup status.
+
+Units appear in column names where applicable. Empty numeric cells indicate
+unavailable quantities, with status and reasons alongside. A blocked Phase 1
+handoff produces a preflight-only audit record with the blocker and available
+inputs, and the companion files contain headers only.
 
 ## Primary-source review
 
