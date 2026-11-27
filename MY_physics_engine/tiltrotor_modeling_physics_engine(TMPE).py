@@ -1933,6 +1933,23 @@ def resolve_xv15_flapping(state, derived, audit, *, force_status):
 def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps, up_mps, air_density,
                              *, rotor_mast_angles_deg=None, mast_angle_source=None, temperature_c=None):
     """Apply CR-166536 hub, wind-mast and force-coefficient equations per rotor."""
+    def project_load(terms, missing):
+        active_terms = [term for term in terms if term[0] != 0]
+        missing = list(missing)
+        for _, value, label, value_source, _ in active_terms:
+            if value is None:
+                missing.append(label)
+            elif not value_source:
+                missing.append(f'source for {label}')
+        if missing:
+            return None, 'UNAVAILABLE', 'Missing or invalid: ' + ', '.join(missing)
+        value = rotor_input_number(sum(weight * force for weight, force, *_ in active_terms))
+        if value is None:
+            return None, 'UNAVAILABLE', 'Requires a finite result'
+        status = ILLUSTRATIVE_CALCULATION if any(
+            illustrative_rotor_status(term[4]) for term in active_terms) else 'CALCULATED'
+        return value, status, ''
+
     source = inputs.source.strip() if isinstance(inputs.source, str) else ''
     calculated_status = 'CALCULATED'
     u, v, w = map(rotor_input_number, inputs.body_velocity_mps)
@@ -2253,6 +2270,51 @@ def calculate_xv15_rotor_flow(inputs, aircraft, beta_deg, pitch_deg, forward_mps
             ('force_coefficient_status', coefficient_status if force_coefficient is not None else 'UNAVAILABLE'),
             ('force_coefficient_source', 'NASA CR-166536 p. A-38'),
         )})
+        # Transpose the A-18/A-19 body-to-mast rotation for the local force
+        # vector (-H, Y, -T). Body x is forward and body z is down.
+        transform_source = (
+            'NASA CR-166536 pp. A-10, A-13, A-18–A-19, transposed body-to-mast axes'
+        )
+        thrust_term = (t, 'mast T', operating_point.t_source or source, operating_point.t_status)
+        h_term = (h, 'mast H', h_source, h_status)
+        y_term = (y, 'mast Y', y_source, y_status)
+        missing_beta = [] if mast_angle_deg is not None else ['mast angle β_m']
+        fx_terms = () if missing_beta else ((sin_beta, *thrust_term), (-cos_beta, *h_term))
+        fx, fx_status, fx_reason = project_load(fx_terms, missing_beta)
+        missing_fz = missing_beta.copy()
+        if phi_deg is None:
+            missing_fz.append('lateral mast tilt φ_m')
+        elif not (inputs.lateral_mast_tilt_source or source):
+            missing_fz.append('source for lateral mast tilt φ_m')
+        fz_terms = ()
+        if not missing_fz:
+            cant_cos = 0.0 if abs(phi_deg) == 90 else cos_phi
+            fz_terms = ((-cos_beta * cant_cos, *thrust_term),
+                        (-sin_beta * cant_cos, *h_term), (sin_phi, *y_term))
+        fz, fz_status, fz_reason = project_load(fz_terms, missing_fz)
+        missing_arms = [label for value, label in ((x, 'CG-to-hub body x'), (z, 'CG-to-hub body z'))
+                        if value is None]
+        if not missing_arms and not source:
+            missing_arms.append('source for CG-to-hub arms')
+        pitch_terms = () if missing_arms else (
+            (z, fx, 'body forward force from ' + fx_reason if fx_reason else 'body forward force',
+             transform_source, fx_status),
+            (-x, fz, 'body down force from ' + fz_reason if fz_reason else 'body down force',
+             transform_source, fz_status),
+        )
+        pitch_arm, pitch_arm_status, pitch_arm_reason = project_load(pitch_terms, missing_arms)
+        for name, value, units, equation, load_status, reason in (
+            ('rotor_body_forward_force_n', fx, 'N', transform_source + ', T sin β_m − H cos β_m',
+             fx_status, fx_reason),
+            ('rotor_body_down_force_n', fz, 'N',
+             transform_source + ', −(T cos β_m + H sin β_m) cos φ_m + Y sin φ_m',
+             fz_status, fz_reason),
+            ('rotor_cg_pitch_arm_moment_nm', pitch_arm, 'N·m',
+             'NASA CR-166536 pp. A-18–A-19, signed CG-to-hub arms, (r × F)_y = z F_x − x F_z',
+             pitch_arm_status, pitch_arm_reason),
+        ):
+            audit_rotor_value(audit, f'{side}_{name}', value, units, equation,
+                              status=load_status, reason=reason)
         audit[f'mu_{side}'] = advance_ratio
         audit[f'c_rf_{side}'] = force_coefficient
         coefficient_dependencies = ', '.join(label for value, label in (
@@ -2416,7 +2478,18 @@ class XV15WingPylonPolar:
             grid = self.coefficient_grid(tables, missing_mast, mach)
             defined = sorted(angle for angle, samples in grid.items() if len(samples) == 1)
             if defined:
-                coverage = f'defined AoA span [{defined[0]:g}, {defined[-1]:g}] deg with table gaps; no extrapolation'
+                coverage = f'defined AoA span [{defined[0]:g}, {defined[-1]:g}] deg'
+                angles = sorted(grid)
+                index = bisect_left(angles, alpha)
+                if alpha in grid:
+                    bracket = (alpha,)
+                else:
+                    bracket = angles[index - 1:index + 1] if 0 < index < len(angles) else ()
+                gaps = [f'{angle:g}' for angle in bracket if len(grid[angle]) != 1]
+                if gaps:
+                    coverage += '. Blank or conflicting AoA row(s) at ' + ', '.join(gaps) + ' deg'
+                elif not bracket:
+                    coverage += '. Request is outside the AoA grid'
             else:
                 coverage = 'no uniquely defined AoA rows at this flap setting and Mach'
             reason = (f'NASA report {name} unavailable at AoA {alpha:.6g} deg, '
@@ -2574,6 +2647,14 @@ def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=No
         if missing:
             row['wing_alpha_missing_inputs'] = ', '.join(dict.fromkeys(missing))
             row['aero_reason'] = 'NASA-corrected wing AoA unavailable. Missing or invalid: ' + row['wing_alpha_missing_inputs']
+            if invalid_flow_inputs:
+                row['aero_first_blocker'] = invalid_flow_inputs[0]
+            elif pitch is None:
+                row['aero_first_blocker'] = 'Phase 2 pitch attitude (--transition-pitch-deg)'
+            elif row['gamma_deg'] is None:
+                row['aero_first_blocker'] = 'Nonzero planar airspeed for flight-path angle gamma'
+            else:
+                row['aero_first_blocker'] = missing[0]
             return row
         alpha_rad = row['fuselage_alpha_rad'] - correction
         alpha = math.degrees(alpha_rad)  # Appendix B table lookup uses degrees.
@@ -2629,11 +2710,13 @@ def transition_wing_forces(state, aircraft, environment, polar, *, rotor_flow=No
 
 
 PRESCRIBED_TRANSITION = 'PRESCRIBED KINEMATIC / ILLUSTRATIVE / UNVALIDATED'
+LONGITUDINAL_3DOF_BLOCKER = 'Total pitching moment about the operating CG and matched pitch inertia through conversion are unavailable.'
 
 
 def simulate_transition(takeoff, aircraft, environment, polar, duration_s, timestep_s, end_angles, *,
                         pitch_attitude_deg=None, rotor_flow_provider=None, illustrative_rotor_flow=False,
-                        heading_deg=0.0, prescribed_velocity_mps=None, prescribed_start_height_m=None):
+                        heading_deg=0.0, prescribed_velocity_mps=None, prescribed_start_height_m=None,
+                        prescribed_start_angles_deg=None):
     """Integrate available forces or evaluate an explicit constant-velocity schedule.
 
     A rotor_flow_provider(state, environment) may supply XV15RotorInputs for
@@ -2648,11 +2731,12 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
     if pitch_attitude_deg is not None:
         require_finite('Phase 2 pitch attitude', pitch_attitude_deg)
     require_finite('Phase 2 heading', heading_deg)
-    state = replace(initialize_transition(takeoff), pitch_attitude_deg=pitch_attitude_deg,
+    handoff = initialize_transition(takeoff)
+    state = replace(handoff, pitch_attitude_deg=pitch_attitude_deg,
                     heading_deg=heading_deg)
     prescribed = prescribed_velocity_mps is not None
-    if prescribed_start_height_m is not None and not prescribed:
-        raise ValueError('A prescribed start height requires prescribed Phase 2 velocity')
+    if not prescribed and (prescribed_start_height_m is not None or prescribed_start_angles_deg is not None):
+        raise ValueError('Prescribed starting values require prescribed Phase 2 velocity')
     if prescribed:
         vx, vz = prescribed_velocity_mps
         require_finite('Prescribed forward velocity', vx)
@@ -2665,18 +2749,37 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
         if not math.isfinite(state.forward_distance_m + vx * duration_s):
             raise ValueError('Prescribed trajectory must end at a finite forward distance')
         state = replace(state, height_agl_m=height, forward_velocity_mps=vx, vertical_velocity_mps=vz)
+        if prescribed_start_angles_deg is not None:
+            left_start, right_start = map(validate_transition_angle, prescribed_start_angles_deg)
+            state = replace(state, left_nacelle_angle_deg=left_start, right_nacelle_angle_deg=right_start)
     origin = state
     trajectory_source = ('Explicit constant forward/up velocity and linear nacelle schedule' if prescribed else
                          'TMPE planar force balance and Phase 1 handoff')
     trajectory_status = PRESCRIBED_TRANSITION if prescribed else 'ILLUSTRATIVE / SOFTWARE-TEST ONLY'
     result = dict(final_state=state, elapsed_s=0.0, requested_s=duration_s, rows=[], simplified=polar is None,
-                  status='UNAVAILABLE', reason='', prescribed=prescribed)
+                  status='UNAVAILABLE', reason='', first_blocker='', prescribed=prescribed)
     coefficient_audit = transition_thrust_coefficient_audit(takeoff)
+    start_audit = dict(phase1_handoff_height_agl_m=handoff.height_agl_m,
+                       phase1_handoff_up_mps=handoff.vertical_velocity_mps,
+                       phase1_handoff_status=takeoff['motion']['takeoff_status'],
+                       phase1_handoff_left_nacelle_deg=handoff.left_nacelle_angle_deg,
+                       phase1_handoff_right_nacelle_deg=handoff.right_nacelle_angle_deg,
+                       phase2_start_height_source=('USER-PRESCRIBED' if prescribed_start_height_m is not None else
+                                                   'PHASE 1 RETAINED STATE'),
+                       phase2_start_velocity_source='USER-PRESCRIBED' if prescribed else 'PHASE 1 RETAINED STATE',
+                       phase2_start_nacelle_source=('USER-PRESCRIBED' if prescribed_start_angles_deg is not None else
+                                                    'PHASE 1 RETAINED STATE'),
+                       phase2_requested_mode='PRESCRIBED KINEMATIC' if prescribed else 'FORCE-BASED',
+                       longitudinal_3dof_status='UNAVAILABLE', longitudinal_3dof_reason=LONGITUDINAL_3DOF_BLOCKER)
     if not prescribed and (takeoff['motion']['takeoff_status'] != 'AIRBORNE' or state.height_agl_m <= 0):
         result['reason'] = (f"Phase 1 ended {takeoff['motion']['takeoff_status']}. "
                             f"{takeoff['motion']['reason']}")
-        preflight = dict(coefficient_audit, **transition_environment_audit(environment),
+        result['first_blocker'] = 'Airborne Phase 1 handoff with positive height AGL'
+        preflight = dict(coefficient_audit, **transition_environment_audit(environment), **start_audit,
                          audit_record='PREFLIGHT ONLY', phase2_time_s=None, simulation_time_s=state.elapsed_s,
+                         first_force_blocker=result['first_blocker'],
+                         phase2_motion_mode='NOT ADVANCED', trajectory_status='PHASE 1 RETAINED STATE',
+                         phase2_force_balance_role='UNAVAILABLE FOR MOTION',
                          rotor_model=takeoff['rotor_model'], aircraft_transition_status='UNAVAILABLE',
                          aero_status='UNAVAILABLE', aero_reason=result['reason'],
                          heading_deg=heading_deg, pitch_attitude_deg=pitch_attitude_deg,
@@ -2716,15 +2819,13 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
             angles = tuple(None if start is None else start + fraction * (end - start)
                            for start, end in zip(starts, (left_end, right_end)))
         state = replace(state, left_nacelle_angle_deg=angles[0], right_nacelle_angle_deg=angles[1])
-        row = dict(coefficient_audit, audit_record='PHASE 2 EVALUATION',
+        row = dict(coefficient_audit, **start_audit, audit_record='PHASE 2 EVALUATION',
                    phase2_time_s=time, simulation_time_s=state.elapsed_s, height_agl_m=state.height_agl_m,
                    forward_distance_m=state.forward_distance_m, forward_velocity_mps=state.forward_velocity_mps,
                    vertical_velocity_mps=state.vertical_velocity_mps, mass_kg=mass,
                    aircraft_weight_n=None if mass is None else mass * G, rotor_model=takeoff['rotor_model'],
                    trajectory_status=trajectory_status, trajectory_source=trajectory_source,
-                   phase2_motion_mode='PRESCRIBED KINEMATIC' if prescribed else 'FORCE-BASED',
-                   phase2_start_height_source=('USER-PRESCRIBED' if prescribed_start_height_m is not None else
-                                               'PHASE 1 RETAINED STATE'),
+                   phase2_motion_mode=start_audit['phase2_requested_mode'],
                    phase2_force_balance_role='DIAGNOSTIC ONLY' if prescribed else 'MOTION INPUT',
                    aircraft_transition_status='UNAVAILABLE')
         rotor_vectors = []
@@ -2755,6 +2856,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
         row.update(acceleration)
         ax, az = acceleration['forward_acceleration_mps2'], acceleration['vertical_acceleration_mps2']
         balance_reason = ''
+        first_force_blocker = ''
         if ax is None or az is None:
             missing = [f'{side} {quantity}' for side in ('left', 'right')
                        for quantity, suffix in (('rotor thrust', 'thrust_n'), ('nacelle angle', 'nacelle_deg'))
@@ -2765,8 +2867,14 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
             if missing:
                 reasons.append('Missing ' + ', '.join(missing))
             balance_reason = '. '.join(reasons) or 'Both net force components and mass are required'
+            first_force_blocker = missing[0] if missing else row.get('aero_first_blocker') or balance_reason
         row.update(force_balance_status='UNAVAILABLE' if balance_reason else 'CALCULATED',
-                   force_balance_reason=balance_reason)
+                   force_balance_reason=balance_reason, first_force_blocker=first_force_blocker)
+        if balance_reason and not prescribed:
+            row['phase2_force_balance_role'] = 'UNAVAILABLE FOR MOTION'
+            if time == 0:
+                row.update(phase2_motion_mode='NOT ADVANCED', trajectory_status='PHASE 1 RETAINED STATE',
+                           trajectory_source='Phase 1 retained state')
         result['rows'].append(row)
         result.update(final_state=state, elapsed_s=time)
         if landed:
@@ -2774,6 +2882,7 @@ def simulate_transition(takeoff, aircraft, environment, polar, duration_s, times
             break
         if not prescribed and balance_reason:
             result['reason'] = balance_reason
+            result['first_blocker'] = first_force_blocker
             break
         if time == duration_s:
             result.update(status='PRESCRIBED' if prescribed else 'CALCULATED', reason='Requested duration reached')
@@ -2898,12 +3007,24 @@ def report_timed_transition(result, audit_path=None, *, verbose=False):
         reason = reason.replace(rows[-1]['aero_reason'], compact_aero_reason(rows[-1]), 1)
     if result.get('prescribed'):
         print(f'Phase 2 demonstration — {PRESCRIBED_TRANSITION}')
-        first = rows[0]
-        print(f"Start {first['height_agl_m']:.4g} m AGL ({first['phase2_start_height_source']}) | "
-              f"Prescribed {first['forward_velocity_mps']:.4g} m/s forward, {first['vertical_velocity_mps']:.4g} m/s up")
         print('Force balance is diagnostic only.')
+    elif status == 'UNAVAILABLE':
+        print('Phase 2 force-based request — BLOCKED')
     else:
         print(f'Phase 2 force-based — ILLUSTRATIVE / {status}')
+    if rows:
+        first = rows[0]
+        pitch = first['pitch_attitude_deg']
+        left = report_cell(first['left_nacelle_deg']) or 'unavailable'
+        right = report_cell(first['right_nacelle_deg']) or 'unavailable'
+        print(f"Start {first['height_agl_m']:.4g} m AGL ({first['phase2_start_height_source']}) | "
+              f"Velocity {first['forward_velocity_mps']:.4g} m/s forward, {first['vertical_velocity_mps']:.4g} m/s up "
+              f"({first['phase2_start_velocity_source']})")
+        pitch_display = 'UNAVAILABLE' if pitch is None else f'{pitch:g}° (USER-PRESCRIBED)'
+        print(f"Start nacelles L/R {left}/{right} deg ({first['phase2_start_nacelle_source']}) | Pitch {pitch_display}")
+    first_blocker = result.get('first_blocker')
+    if first_blocker and first_blocker != reason:
+        print(f'First missing force input — {first_blocker}')
     if reason:
         label = 'Blocker' if status == 'UNAVAILABLE' else 'Outcome'
         print(f'{label} — {reason}')
@@ -3287,8 +3408,10 @@ def report_transition_csvs(result, checkpoints, audit_path):
         'aircraft_weight_n', 'net_forward_n', 'net_up_n',
         'forward_acceleration_mps2', 'vertical_acceleration_mps2',
         'phase2_status', 'phase2_reason', 'aero_status', 'aero_reason',
-        'trajectory_status', 'trajectory_source', 'phase2_motion_mode', 'phase2_force_balance_role',
-        'force_balance_status', 'force_balance_reason', 'phase2_start_height_source', 'aircraft_transition_status',
+        'trajectory_status', 'trajectory_source', 'phase2_requested_mode', 'phase2_motion_mode',
+        'phase2_force_balance_role', 'force_balance_status', 'first_force_blocker', 'force_balance_reason',
+        'phase2_start_height_source', 'phase2_start_velocity_source', 'phase2_start_nacelle_source',
+        'longitudinal_3dof_status', 'aircraft_transition_status',
     )
     companion_rows = []
     for row in checkpoints:
@@ -3334,6 +3457,18 @@ def report_transition_csvs(result, checkpoints, audit_path):
         ('rotor_force_status', 'rotor_force_status'),
         ('held_phase1_thrust_n', 'thrust_n'), ('held_thrust_status', 'rotor_status'),
         ('projected_forward_n', 'rotor_forward_n'), ('projected_up_n', 'rotor_up_n'),
+        ('diagnostic_body_forward_force_n', 'rotor_body_forward_force_n'),
+        ('diagnostic_body_forward_force_status', 'rotor_body_forward_force_n_status'),
+        ('diagnostic_body_forward_force_source', 'rotor_body_forward_force_n_source'),
+        ('diagnostic_body_forward_force_reason', 'rotor_body_forward_force_n_reason'),
+        ('diagnostic_body_down_force_n', 'rotor_body_down_force_n'),
+        ('diagnostic_body_down_force_status', 'rotor_body_down_force_n_status'),
+        ('diagnostic_body_down_force_source', 'rotor_body_down_force_n_source'),
+        ('diagnostic_body_down_force_reason', 'rotor_body_down_force_n_reason'),
+        ('diagnostic_pitch_arm_moment_nm', 'rotor_cg_pitch_arm_moment_nm'),
+        ('diagnostic_pitch_arm_moment_status', 'rotor_cg_pitch_arm_moment_nm_status'),
+        ('diagnostic_pitch_arm_moment_source', 'rotor_cg_pitch_arm_moment_nm_source'),
+        ('diagnostic_pitch_arm_moment_reason', 'rotor_cg_pitch_arm_moment_nm_reason'),
         ('phase1_ct', 'thrust_coefficient'), ('phase1_ct_status', 'ct_status'), ('phase1_ct_source', 'ct_source'),
         ('phase1_calibration', 'rotor_calibration'),
         ('in_plane_assumptions', 'in_plane_state_assumptions'),
@@ -3696,6 +3831,7 @@ def report_takeoff_summary(result, duration_s):
     print('\nPHASE 1 — HELICOPTER TAKEOFF')
     print(f"Phase 1 elapsed: {result['elapsed_s']:.6g} / {duration_s:.6g} s")
     print(f"TAKEOFF STATUS         : {motion['takeoff_status']}")
+    print(f"Retained state — {motion['height_agl_m']:.4g} m AGL, {motion['vertical_velocity_mps']:.4g} m/s up")
     print(f"Vertical force balance — {balance['status']}")
     values = (result['takeoff_mass_kg'], balance.get('aircraft_weight_n'),
               balance.get('total_rotor_vertical_force_n'), balance.get('net_vertical_force_n'),
@@ -3784,6 +3920,7 @@ def report_status_summary(takeoff, transition, polar):
 
     print('\nMODEL LIMITS')
     print('XV-15 transition performance — UNAVAILABLE. Installed rotor maps and wing wake loads are missing.')
+    print(f'Longitudinal 3-DoF — UNAVAILABLE. {LONGITUDINAL_3DOF_BLOCKER}')
     print('Phase 1 is vertical only. Phase 2 uses planar motion and holds Phase 1 axial thrust.')
     print('The model excludes ground effect, rotor RPM response, and wake-immersed wing loads.')
     print('See the wide audit for per-step sources and blockers. Use --verbose for the detailed terminal report.')
@@ -3849,6 +3986,8 @@ def main(argv=None):
                         help='nose-up-positive pitch for Phase 2 body-axis airflow and NASA wing AoA')
     parser.add_argument('--transition-end', metavar='LEFT:RIGHT',
                         help='ending nacelle angles in degrees, default 0:0')
+    parser.add_argument('--transition-start', metavar='LEFT:RIGHT',
+                        help='kinematic start nacelle angles in degrees, default Phase 1 nacelle angles')
     parser.add_argument('--transition-kinematic', metavar='FORWARD:UP',
                         help='run the full Phase 2 schedule with explicit constant velocities in m/s')
     parser.add_argument('--transition-start-height-m', type=float, metavar='METERS',
@@ -3899,6 +4038,7 @@ def main(argv=None):
                      heading_status='DEFAULTED', heading_source='TMPE AircraftState default yaw (north)')
     try:
         prescribed_velocity = None
+        prescribed_start_angles = None
         if args.transition_kinematic is not None:
             prescribed_velocity = tuple(map(float, args.transition_kinematic.split(':')))
             if len(prescribed_velocity) != 2 or not all(map(math.isfinite, prescribed_velocity)):
@@ -3907,9 +4047,16 @@ def main(argv=None):
             if prescribed_velocity is None:
                 raise ValueError('--transition-start-height-m requires --transition-kinematic')
             require_finite('--transition-start-height-m', args.transition_start_height_m, 0)
+        if args.transition_start is not None:
+            if prescribed_velocity is None:
+                raise ValueError('--transition-start requires --transition-kinematic')
+            prescribed_start_angles = tuple(map(float, args.transition_start.split(':')))
         angle_pairs = [tuple(map(float, pair.split(':'))) for pair in args.nacelle_schedule]
         end_angles = tuple(map(float, args.transition_end.split(':')))
-        for pair in [*angle_pairs, end_angles]:
+        angle_inputs = [*angle_pairs, end_angles]
+        if prescribed_start_angles is not None:
+            angle_inputs.append(prescribed_start_angles)
+        for pair in angle_inputs:
             if len(pair) != 2:
                 raise ValueError('Nacelle angle pairs must be LEFT:RIGHT')
             for angle in pair:
@@ -4030,7 +4177,8 @@ def main(argv=None):
                                          illustrative_rotor_flow=args.illustrative_rotor_flow,
                                          heading_deg=math.degrees(state.yaw),
                                          prescribed_velocity_mps=prescribed_velocity,
-                                         prescribed_start_height_m=args.transition_start_height_m)
+                                         prescribed_start_height_m=args.transition_start_height_m,
+                                         prescribed_start_angles_deg=prescribed_start_angles)
     except ValueError as exc:
         parser.error(str(exc))
     audit_rows = transition['rows'] or [transition['preflight_audit']]

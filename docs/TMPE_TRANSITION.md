@@ -29,7 +29,8 @@ For a software-only run of the older constant-coefficient demonstration, add
 For the full-duration prescribed demonstration, supply explicit constant
 forward and up velocities with `--transition-kinematic FORWARD:UP` (m/s).
 `--transition-start-height-m` can set the starting AGL independently of
-Phase 1. The linear nacelle schedule and clock advance to the requested
+Phase 1, and `--transition-start LEFT:RIGHT` can set the starting nacelle
+angles in degrees. The linear nacelle schedule and clock advance to the requested
 endpoint. Available forces remain diagnostic and missing fields stay blank.
 `--trim-benchmark` runs the separate TR-1195-1 A-31 comparison. See the
 [data and assumptions ledger](PHASE2_DATA_AND_ASSUMPTIONS.md) for examples,

@@ -1017,6 +1017,7 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.environment.winddirection = math.degrees(math.atan2(4, 5))
         result = self.transition(pitch_attitude_deg=10)
         self.assertEqual(result['elapsed_s'], 0)
+        self.assertIn('left mast-axis H', result['first_blocker'])
         self.assertEqual(len(result['rows']), 1)
         first = result['rows'][0]
         pitch = math.radians(10)
@@ -1072,11 +1073,15 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertAlmostEqual(eastbound['body_w_mps'], 4 * math.sin(pitch) - math.cos(pitch))
 
     def test_missing_pitch_leaves_projected_velocity_and_advance_ratio_blank(self):
-        first = self.transition()['rows'][0]
+        transition = self.transition()
+        first = transition['rows'][0]
         for key in ('pitch_attitude_deg', 'body_u_mps', 'body_w_mps', 'mu_left', 'mu_right'):
             self.assertIsNone(first[key])
         self.assertEqual(first['body_v_mps'], 0)
         self.assertIn('--transition-pitch-deg', first['aero_reason'])
+        self.assertEqual(transition['first_blocker'], 'Phase 2 pitch attitude (--transition-pitch-deg)')
+        self.assertEqual(first['phase2_motion_mode'], 'NOT ADVANCED')
+        self.assertEqual(first['trajectory_status'], 'PHASE 1 RETAINED STATE')
 
     def test_prescribed_phase2_reaches_requested_end_with_unavailable_forces(self):
         takeoff = tmpe.simulate_takeoff(self.aircraft, self.environment, 1, .1, rotor_model='unsupported')
@@ -1085,11 +1090,16 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(strict['status'], 'UNAVAILABLE')
 
         prescribed = tmpe.simulate_transition(takeoff, self.aircraft, self.environment, self.polar, 10, .3, (0, 20),
-                                             prescribed_velocity_mps=(25, 1), prescribed_start_height_m=20)
+                                             prescribed_velocity_mps=(25, 1), prescribed_start_height_m=20,
+                                             prescribed_start_angles_deg=(75, 65))
         self.assertEqual(prescribed['status'], 'PRESCRIBED')
         self.assertEqual(prescribed['elapsed_s'], 10)
         self.assertEqual(prescribed['final_state'].forward_distance_m, 250)
         self.assertEqual(prescribed['final_state'].height_agl_m, 30)
+        first = prescribed['rows'][0]
+        self.assertEqual((first['left_nacelle_deg'], first['right_nacelle_deg']), (75, 65))
+        self.assertEqual(first['phase1_handoff_left_nacelle_deg'], 90)
+        self.assertEqual(first['phase2_start_nacelle_source'], 'USER-PRESCRIBED')
         final = prescribed['rows'][-1]
         self.assertEqual((final['left_nacelle_deg'], final['right_nacelle_deg']), (0, 20))
         self.assertEqual(final['phase2_force_balance_role'], 'DIAGNOSTIC ONLY')
@@ -1105,6 +1115,16 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(float(checkpoints[-1]['phase2_time_s']), 10)
         self.assertEqual(checkpoints[-1]['phase2_status'], 'PRESCRIBED')
         self.assertEqual(checkpoints[-1]['net_up_n'], '')
+
+    def test_nasa_negative_aoa_requires_defined_brackets_at_both_mast_angles(self):
+        polar = tmpe.XV15WingPylonPolar.load((40, 25))
+        alpha, mach = -96.040279, .13963306
+        selected, _ = polar.evaluate(alpha, 0, mach)
+        self.assertAlmostEqual(selected[0][0], .12 * (-90 - alpha) / 10)
+        selected, reason = polar.evaluate(alpha, .9, mach)
+        self.assertIsNone(selected)
+        self.assertIn('required table mast 90 deg', reason)
+        self.assertIn('Blank or conflicting AoA row(s) at -100 deg', reason)
 
     def test_a31_benchmark_distinguishes_reference_normalization_and_missing_forces(self):
         benchmark = tmpe.runpy.run_path(str(tmpe.PROJECT_DIR / 'xv15_trim_benchmark.py'))
@@ -1163,6 +1183,11 @@ class NASAFlowTransitionTests(unittest.TestCase):
         coefficients = [math.hypot(point.t_n, point.h_n, point.y_n) / denominator for point in (left, right)]
         self.assertAlmostEqual(first['c_rf_left'], coefficients[0])
         self.assertAlmostEqual(first['c_rf_right'], coefficients[1])
+        self.assertAlmostEqual(first['left_rotor_body_forward_force_n'], -left.h_n)
+        cant = math.radians(1)
+        self.assertAlmostEqual(first['left_rotor_body_down_force_n'],
+                               -left.t_n * math.cos(cant) + left.y_n * math.sin(cant))
+        self.assertIsNone(first['left_rotor_cg_pitch_arm_moment_nm'])
         correction = .26 * .0806 * sum(coefficients) / .15**2
         self.assertAlmostEqual(first['rotor_flow_correction_rad'], correction)
         self.assertAlmostEqual(first['wing_alpha_rad'], first['fuselage_alpha_rad'] - correction)
@@ -1190,6 +1215,12 @@ class NASAFlowTransitionTests(unittest.TestCase):
             self.assertAlmostEqual(row[f'{side}_rotor_omega_effective_rad_s'], effective)
             self.assertAlmostEqual(row[f'mu_{side}'], math.hypot(*mast[:2]) / (effective * radius))
             self.assertAlmostEqual(row[f'c_rf_{side}'], math.hypot(30000, 3000, 4000) / denominator)
+        self.assertEqual(row['left_rotor_body_forward_force_n'], -3000)
+        self.assertEqual(row['left_rotor_body_down_force_n'], -30000)
+        self.assertEqual(row['left_rotor_cg_pitch_arm_moment_nm'], 63000)
+        self.assertEqual(row['right_rotor_body_forward_force_n'], 30000)
+        self.assertEqual(row['right_rotor_body_down_force_n'], -3000)
+        self.assertEqual(row['right_rotor_cg_pitch_arm_moment_nm'], -51000)
 
     def test_wind_azimuth_uses_mirrored_hub_flow_and_preserves_undefined_direction(self):
         point = tmpe.XV15RotorOperatingPoint(rpm=565)
