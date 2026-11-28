@@ -21,7 +21,7 @@ python3 -m unittest discover -s tests -v
 - The five environmental prompts have defaults. Enter separate positive durations for takeoff and transition, or supply both duration flags.
 - Normal output shows run inputs, Phase 1 forces, up to five Phase 2 checkpoints, the final state and data blockers. The Phase 2 audit CSV retains every evaluated timestep.
 - Diagnostics shows XML loading records and force-model blockers. Verbose adds equations and the secondary freestream AoA trace. Flags can be combined.
-- Strict Phase 2 stops when required forces are unavailable. Use `--transition-kinematic FORWARD:UP` with explicit velocities in m/s for a full-duration schedule demonstration. Use `--trim-benchmark` for the separate GTRS trim comparison. [Phase 2 data and assumptions](docs/PHASE2_DATA_AND_ASSUMPTIONS.md)
+- Strict Phase 2 evaluates available rotor and airframe loads and stops when the complete force balance is unavailable. `--transition-kinematic FORWARD:[RIGHT:]UP` takes constant velocities in m/s for a full-duration schedule. Set initial conditions with `--transition-start-height-m`, `--transition-start`, `--transition-pitch-deg`, `--transition-roll-deg`, `--transition-heading-deg` and `--transition-start-rates-deg-s`. `--trim-benchmark` runs the separate GTRS trim comparison. [Phase 2 data and assumptions](docs/PHASE2_DATA_AND_ASSUMPTIONS.md)
 
 ## Architecture
 

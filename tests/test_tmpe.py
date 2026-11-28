@@ -1011,7 +1011,7 @@ class NASAFlowTransitionTests(unittest.TestCase):
         return tmpe.simulate_transition(self.takeoff, self.aircraft, self.environment,
                                         self.polar, .2, .1, (90, 90), **kwargs)
 
-    def test_planar_flow_and_accepted_rpm_are_audited_with_force_blockers(self):
+    def test_crosswind_flow_and_accepted_rpm_are_audited_with_force_blockers(self):
         self.takeoff['motion']['vertical_velocity_mps'] = 1
         self.environment.windspeed = math.hypot(5, 4)
         self.environment.winddirection = math.degrees(math.atan2(4, 5))
@@ -1028,7 +1028,7 @@ class NASAFlowTransitionTests(unittest.TestCase):
         sound_speed = math.sqrt(1.4 * 287.05 * (self.environment.temperature + 273.15))
         tip_speed = omega * 3.81
         for key, expected in (('wind_east_mps', -4), ('body_u_mps', u),
-                              ('body_v_mps', 0), ('body_w_mps', w),
+                              ('body_v_mps', 4), ('body_w_mps', w),
                               ('body_p_rad_s', 0), ('body_q_rad_s', 0), ('body_r_rad_s', 0),
                               ('rotor_radius_m', 3.81)):
             self.assertAlmostEqual(first[key], expected)
@@ -1039,18 +1039,25 @@ class NASAFlowTransitionTests(unittest.TestCase):
             self.assertEqual(first[f'{side}_rotor_rpm'], 565)
             self.assertAlmostEqual(first[f'{side}_rotor_omega_rad_s'], omega)
             self.assertAlmostEqual(first[f'{side}_rotor_omega_effective_rad_s'], omega)
-            self.assertAlmostEqual(first[f'{side}_rotor_tip_mach'], (tip_speed + math.hypot(5, 1)) / sound_speed)
+            self.assertAlmostEqual(first[f'{side}_rotor_tip_mach'], (tip_speed + math.hypot(5, 4, 1)) / sound_speed)
             self.assertAlmostEqual(first[f'{side}_in_plane_dn_n'], 1.225 * math.pi * 3.81**2 * tip_speed**2)
             self.assertIn('ILLUSTRATIVE', first[f'{side}_in_plane_cr166536_ct_status'])
-            self.assertIsNone(first[f'{side}_in_plane_q6_n'])
+            self.assertGreater(first[f'{side}_in_plane_q6_n'], 0)
+            self.assertGreater(first[f'{side}_in_plane_profile_drag_factor'], 0)
+            self.assertEqual(first[f'{side}_in_plane_tip_loss_factor'], .97)
             self.assertAlmostEqual(first[f'{side}_hub_u_mast_mps'], u)
-            self.assertAlmostEqual(first[f'{side}_hub_v_mast_mps'], w * math.sin(phi))
-            self.assertAlmostEqual(first[f'{side}_hub_w_mast_mps'], w * math.cos(phi))
-            self.assertAlmostEqual(first[f'mu_{side}'], math.hypot(u, w * math.sin(phi)) / (omega * 3.81))
+            signed_lateral = -4 if side == 'left' else 4
+            v_mast = signed_lateral * math.cos(phi) + w * math.sin(phi)
+            w_mast = -signed_lateral * math.sin(phi) + w * math.cos(phi)
+            self.assertAlmostEqual(first[f'{side}_hub_v_mast_mps'], v_mast)
+            self.assertAlmostEqual(first[f'{side}_hub_w_mast_mps'], w_mast)
+            self.assertAlmostEqual(first[f'mu_{side}'], math.hypot(u, v_mast) / (omega * 3.81))
             self.assertEqual(first[f'{side}_rotor_t_n'], self.takeoff[f'{side}_proprotor_thrust_n'])
             self.assertIsNone(first[f'{side}_rotor_h_n'])
             self.assertIsNone(first[f'{side}_rotor_y_n'])
             self.assertIsNone(first[f'c_rf_{side}'])
+            self.assertAlmostEqual(first[f'{side}_rotor_body_down_axial_contribution_n'],
+                                   -first[f'{side}_rotor_t_n'] * math.cos(phi))
             self.assertIn(f'{side} mast-axis H', result['reason'])
             self.assertIn(f'{side} mast-axis Y', result['reason'])
 
@@ -1060,7 +1067,7 @@ class NASAFlowTransitionTests(unittest.TestCase):
             with audit_path.open(newline='') as stream:
                 row = next(csv.DictReader(stream))
         self.assertIn('CALCULATED', row['body_u_status'])
-        self.assertIn('ASSUMED', row['body_v_status'])
+        self.assertIn('CALCULATED', row['body_v_status'])
         self.assertIn('ASSUMED', row['body_rates_status'])
         self.assertIn('UNAVAILABLE', row['hub_geometry_status'])
         self.assertEqual(row['left_rotor_rpm_status'], 'XML-SOURCED / HELD FIXED')
@@ -1116,6 +1123,54 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(checkpoints[-1]['phase2_status'], 'PRESCRIBED')
         self.assertEqual(checkpoints[-1]['net_up_n'], '')
 
+    def test_spatial_kinematics_preserve_initial_rate_provenance_and_exact_duration(self):
+        result = tmpe.simulate_transition(
+            self.takeoff, self.aircraft, self.environment, self.polar, .25, .1, (35, 45),
+            prescribed_velocity_mps=(12, 3, 2), prescribed_start_height_m=20,
+            prescribed_start_angles_deg=(60, 65), roll_attitude_deg=5, pitch_attitude_deg=4,
+            heading_deg=90, initial_body_rates_rad_s=(.01, .02, .03),
+        )
+        first, *_, final = result['rows']
+        self.assertEqual(result['elapsed_s'], .25)
+        self.assertEqual(result['force_advanced_axes'], ())
+        self.assertAlmostEqual(final['height_agl_m'], 20.5)
+        self.assertAlmostEqual(final['east_distance_m'], 3)
+        self.assertAlmostEqual(final['north_distance_m'], -.75)
+        self.assertEqual(first['body_rates_status'], 'USER-PRESCRIBED')
+        self.assertEqual(first['body_q_rad_s'], .02)
+        self.assertIsNotNone(first['body_rate_coupling_x_mps2'])
+        self.assertIsNone(final['body_q_rad_s'])
+        self.assertIsNone(final['total_body_fy_n'])
+        self.assertEqual(final['roll_attitude_deg'], 5)
+        self.assertEqual(final['roll_attitude_status'], 'USER-PRESCRIBED')
+
+    def test_explicit_force_request_initial_state_is_evaluated_before_handoff_gate(self):
+        takeoff = tmpe.simulate_takeoff(self.aircraft, self.environment, 1, .1, rotor_model='unsupported')
+        result = tmpe.simulate_transition(
+            takeoff, self.aircraft, self.environment, self.polar, .25, .1, (0, 0),
+            initial_velocity_mps=(12, 3, 2), prescribed_start_height_m=20,
+            prescribed_start_angles_deg=(45, 45), pitch_attitude_deg=4,
+        )
+        row, = result['rows']
+        self.assertEqual(result['force_advanced_axes'], ())
+        self.assertEqual(result['elapsed_s'], 0)
+        self.assertEqual(row['phase2_motion_mode'], 'NOT ADVANCED')
+        self.assertEqual(row['trajectory_status'], 'PHASE 2 INITIAL STATE RETAINED')
+        self.assertEqual((row['left_nacelle_deg'], row['right_nacelle_deg']), (45, 45))
+        self.assertEqual(row['lateral_velocity_mps'], 3)
+        self.assertEqual(row['height_agl_m'], 20)
+
+    def test_left_wake_and_signed_fuselage_drag_do_not_require_paired_inflow(self):
+        row = tmpe.calculate_airframe_loads((10, 0, 0), 1.2, 20, (0, 0), (5, None),
+                                            None, None, None, None)
+        self.assertAlmostEqual(row['left_wing_wake_induced_mps'], 8)
+        self.assertIsNone(row['right_wing_wake_induced_mps'])
+        self.assertEqual(row['wing_local_wake_status'], 'PARTIAL LOCAL FLOW')
+        self.assertIsNone(row['spinner_drag_n'])
+        self.assertIsNone(row['pylon_interference_drag_n'])
+        self.assertAlmostEqual(row['fuselage_extra_drag_body_force_x_n'], 60 * .5 * .3048**2)
+        self.assertAlmostEqual(row['gear_pod_drag_body_force_x_n'], -60 * 1.15 * .3048**2)
+
     def test_nasa_negative_aoa_requires_defined_brackets_at_both_mast_angles(self):
         polar = tmpe.XV15WingPylonPolar.load((40, 25))
         alpha, mach = -96.040279, .13963306
@@ -1126,11 +1181,31 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertIn('required table mast 90 deg', reason)
         self.assertIn('Blank or conflicting AoA row(s) at -100 deg', reason)
 
+    def test_prescribed_phase2_keeps_wing_lift_when_drag_lookup_is_unavailable(self):
+        self.environment.windspeed = 0
+        polar = tmpe.XV15WingPylonPolar.load((20, 12.5))
+        alpha = math.radians(-99)
+        result = tmpe.simulate_transition(
+            self.takeoff, self.aircraft, self.environment, polar, .1, .1, (45, 45),
+            rotor_flow_provider=lambda *_: tmpe.XV15RotorFlow('Synthetic zero-resultant check', 0, 0, .15, .15),
+            prescribed_velocity_mps=(50 * math.cos(alpha), 0, -50 * math.sin(alpha)),
+            prescribed_start_height_m=20, prescribed_start_angles_deg=(45, 45), pitch_attitude_deg=0,
+        )
+        first = result['rows'][0]
+        self.assertAlmostEqual(first['cl'], .0675)
+        self.assertIsNone(first['cd'])
+        self.assertIn('CD unavailable', first['aero_reason'])
+        self.assertGreater(first['wing_freestream_base_lift_n'], 0)
+        self.assertIsNotNone(first['wing_freestream_lift_body_force_z_n'])
+        self.assertIsNone(first['wing_freestream_drag_body_force_z_n'])
+        self.assertIsNone(first['total_body_fz_n'])
+
     def test_a31_benchmark_distinguishes_reference_normalization_and_missing_forces(self):
         benchmark = tmpe.runpy.run_path(str(tmpe.PROJECT_DIR / 'xv15_trim_benchmark.py'))
         result = benchmark['evaluate_xv15_trim_benchmark'](
             self.aircraft, tmpe.XV15RotorInputs, tmpe.XV15RotorOperatingPoint, tmpe.XV15InPlaneState,
             tmpe.calculate_xv15_rotor_flow, tmpe.XV15_LATERAL_MAST_TILT_DEG, tmpe.XV15_MAST_TILT_SOURCE,
+            blade_inputs=tmpe.xv15_gtrs_blade_inputs(self.aircraft),
         )
         left = {row['quantity']: row for row in result['rows'] if row['side'] == 'left'}
         self.assertAlmostEqual(left['shaft tip speed (ft/s)']['calculated'], 771, places=2)
@@ -1139,6 +1214,8 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertAlmostEqual(left['advance ratio']['difference'], 0, delta=.0001)
         self.assertAlmostEqual(left['total inflow ratio']['difference'], 0, delta=.0001)
         self.assertAlmostEqual(left['axial thrust (lbf)']['difference'], 0, delta=.5)
+        self.assertAlmostEqual(left['blade CD']['difference'], 0, delta=.000002)
+        self.assertAlmostEqual(left['operating coning (deg)']['difference'], 0, delta=.0001)
         self.assertIsNone(left['mast H (lbf)']['calculated'])
         self.assertIsNone(left['mast Y (lbf)']['calculated'])
         self.assertIsNone(left['C_RF']['printed'])
@@ -1191,6 +1268,9 @@ class NASAFlowTransitionTests(unittest.TestCase):
         correction = .26 * .0806 * sum(coefficients) / .15**2
         self.assertAlmostEqual(first['rotor_flow_correction_rad'], correction)
         self.assertAlmostEqual(first['wing_alpha_rad'], first['fuselage_alpha_rad'] - correction)
+        self.assertIsNotNone(first['total_rotor_body_forward_force_n'])
+        self.assertIsNone(first['total_body_fx_n'])
+        self.assertEqual(result['force_advanced_axes'], ())
 
     def test_per_rotor_hub_axes_and_speed_with_nonzero_body_rates(self):
         point = tmpe.XV15RotorOperatingPoint(565, 30000, 3000, -4000)
@@ -1204,7 +1284,6 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(missing, [])
         omega = 565 * math.tau / 60
         radius = 3.81
-        denominator = 1.225 * math.pi * radius**2 * (omega * radius)**2
         for side, body, mast, effective in (
             ('left', (5.7, 1.7, 1.3), (5.7, -1.7, 1.3), omega + .3),
             ('right', (3.4, 2.1, 1.8), (1.8, 2.1, -3.4), omega + .1),
@@ -1214,13 +1293,54 @@ class NASAFlowTransitionTests(unittest.TestCase):
                     self.assertAlmostEqual(row[f'{side}_hub_{axis}_{frame}_mps'], value)
             self.assertAlmostEqual(row[f'{side}_rotor_omega_effective_rad_s'], effective)
             self.assertAlmostEqual(row[f'mu_{side}'], math.hypot(*mast[:2]) / (effective * radius))
+            denominator = 1.225 * math.pi * radius**2 * (effective * radius)**2
             self.assertAlmostEqual(row[f'c_rf_{side}'], math.hypot(30000, 3000, 4000) / denominator)
         self.assertEqual(row['left_rotor_body_forward_force_n'], -3000)
+        self.assertEqual(row['left_rotor_body_right_force_n'], 4000)
         self.assertEqual(row['left_rotor_body_down_force_n'], -30000)
+        self.assertEqual(row['left_rotor_cg_roll_arm_moment_nm'], 94000)
         self.assertEqual(row['left_rotor_cg_pitch_arm_moment_nm'], 63000)
+        self.assertEqual(row['left_rotor_cg_yaw_arm_moment_nm'], -1000)
         self.assertEqual(row['right_rotor_body_forward_force_n'], 30000)
+        self.assertEqual(row['right_rotor_body_right_force_n'], -4000)
         self.assertEqual(row['right_rotor_body_down_force_n'], -3000)
+        self.assertEqual(row['right_rotor_cg_roll_arm_moment_nm'], -20000)
         self.assertEqual(row['right_rotor_cg_pitch_arm_moment_nm'], -51000)
+        self.assertEqual(row['right_rotor_cg_yaw_arm_moment_nm'], -132000)
+
+    def test_per_rotor_load_projection_preserves_independent_components(self):
+        point = tmpe.XV15RotorOperatingPoint(t_n=10_000, y_n=200)
+        inputs = tmpe.XV15RotorInputs(
+            'Synthetic load projection fixture', lateral_mast_tilt_deg=0, left=point, right=point,
+            left_hub_offset_body_m=(None, 0, -2),
+        )
+        _, row, _ = tmpe.calculate_xv15_rotor_flow(
+            inputs, self.aircraft, 0, None, None, None, 1.225)
+        self.assertIsNone(row['left_rotor_body_forward_force_n'])
+        self.assertIn('mast H', row['left_rotor_body_forward_force_n_reason'])
+        self.assertEqual(row['left_rotor_body_right_force_n'], -200)
+        self.assertEqual(row['left_rotor_body_down_force_n'], -10_000)
+        self.assertEqual(row['left_rotor_cg_roll_arm_moment_nm'], -400)
+        self.assertIsNone(row['left_rotor_cg_yaw_arm_moment_nm'])
+        self.assertIn('CG-to-hub body x', row['left_rotor_cg_yaw_arm_moment_nm_reason'])
+
+    def test_axial_hub_flow_and_tip_mach_do_not_require_in_plane_velocity(self):
+        point = tmpe.XV15RotorOperatingPoint(rpm=565, t_n=10_000)
+        inputs = tmpe.XV15RotorInputs(
+            'Synthetic partial hub flow fixture', body_velocity_mps=(None, None, -10),
+            body_rates_rad_s=(0, 0, 0), lateral_mast_tilt_deg=0, left=point, right=point,
+        )
+        _, row, _ = tmpe.calculate_xv15_rotor_flow(
+            inputs, self.aircraft, 0, None, None, None, 1.225, temperature_c=15,
+            cg_airspeed_mps=30,
+        )
+        self.assertEqual(row['left_hub_velocity_status'], 'PARTIAL')
+        self.assertEqual(row['left_hub_w_mast_mps'], -10)
+        self.assertIsNone(row['left_wind_azimuth_rad'])
+        self.assertIsNone(row['mu_left'])
+        self.assertAlmostEqual(row['left_in_plane_lambda_zero'], 10 / (565 * math.tau / 60 * 3.81))
+        self.assertEqual(row['rotor_cg_airspeed_mps'], 30)
+        self.assertIsNotNone(row['left_rotor_tip_mach'])
 
     def test_wind_azimuth_uses_mirrored_hub_flow_and_preserves_undefined_direction(self):
         point = tmpe.XV15RotorOperatingPoint(rpm=565)
@@ -1375,9 +1495,9 @@ class NASAFlowTransitionTests(unittest.TestCase):
         self.assertEqual(row['air_density_status'], 'DEFAULTED')
         self.assertEqual(row['wind_speed_status'], 'USER-PRESCRIBED')
         self.assertEqual(row['rotor_model_status'], 'DEFAULTED')
-        self.assertEqual(row['left_rotor_rpm'], '565')
+        self.assertEqual(float(row['left_rotor_rpm']), 565)
         self.assertEqual(row['left_rotor_rpm_status'], 'XML-SOURCED / HELD FIXED')
-        self.assertEqual(row['left_collective_input_deg'], '15')
+        self.assertEqual(float(row['left_collective_input_deg']), 15)
         self.assertEqual(row['left_thrust_coefficient'], '')
         self.assertEqual(row['left_cr177436_hover_ct'], '')
         self.assertEqual(row['left_hub_u_body_mps'], '')

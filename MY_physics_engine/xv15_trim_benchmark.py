@@ -1,6 +1,7 @@
 """One GTRS model trim printout, transcribed from the supplied TR-1195-1 p. A-31 scan."""
 
 import math
+from dataclasses import replace
 
 
 TRIM_SOURCE = 'TR-1195-1 p. A-31, Aircraft Trim Flight Conditions'
@@ -23,7 +24,7 @@ SLUG_FT3_KG_M3 = LBF_N / FT_M**4  # One slug = lbf s²/ft.
 
 
 def evaluate_xv15_trim_benchmark(aircraft, inputs_type, operating_point_type, in_plane_state_type, calculate_rotor_flow,
-                                lateral_mast_tilt_deg, lateral_mast_tilt_source):
+                                lateral_mast_tilt_deg, lateral_mast_tilt_source, *, blade_inputs=None):
     """Compare independent kinematics and normalization with the finite printed trim case."""
     rpm = float(TRIM['rpm'])
     density = float(TRIM['density_slug_ft3']) * SLUG_FT3_KG_M3
@@ -37,9 +38,12 @@ def evaluate_xv15_trim_benchmark(aircraft, inputs_type, operating_point_type, in
         values = (tuple(float(reference[key]) * LBF_N for key in ('thrust_lbf', 'h_lbf', 'y_lbf'))
                   if kinematic_audit is not None else (None, None, None))
         tip = kinematic_audit.get(f'{side}_in_plane_effective_tip_speed_mps') if kinematic_audit is not None else None
-        state = (None if tip is None else in_plane_state_type(
-            source=f'{TRIM_SOURCE}, printed induced velocity divided by effective tip speed',
-            induced_inflow=float(reference['induced_velocity_fps']) * FT_M / tip))
+        state = blade_inputs
+        if tip is not None:
+            source = f'{TRIM_SOURCE}, printed induced velocity divided by effective tip speed'
+            state = (in_plane_state_type(source=source) if state is None else
+                     replace(state, source=f'{state.source} | {source}'))
+            state = replace(state, induced_inflow=float(reference['induced_velocity_fps']) * FT_M / tip)
         return operating_point_type(rpm, *values, rpm_source=TRIM_SOURCE, t_source=TRIM_SOURCE,
                                     in_plane_force_source=TRIM_SOURCE, in_plane_state=state)
 
@@ -86,6 +90,11 @@ def evaluate_xv15_trim_benchmark(aircraft, inputs_type, operating_point_type, in
             comparison(side, f'mast {force.upper()} (lbf)', reported[f'{force}_lbf'],
                        None if calculated is None else calculated / LBF_N, 'independent force law')
         comparison(side, 'CT', reported['ct'], reference_fed[f'{side}_in_plane_cr166536_ct'], 'printed thrust / DN')
+        comparison(side, 'blade CD', reported['cd'], reference_fed[f'{side}_in_plane_blade_cd'],
+                   'A-22 with GTRS input deck and printed thrust')
+        coning = reference_fed[f'{side}_in_plane_derived_coning_rad']
+        comparison(side, 'operating coning (deg)', reported['coning_deg'], None if coning is None else math.degrees(coning),
+                   'A-22 with GTRS input deck and printed thrust')
         cp = None if None in (dn, shaft_tip) else float(reported['power_shp']) * 550 * FT_M * LBF_N / (dn * shaft_tip)
         comparison(side, 'CP', reported['cp'], cp, 'printed shaft power / (DN × shaft tip speed)')
         omega = value('rotor_omega_rad_s')
@@ -96,9 +105,9 @@ def evaluate_xv15_trim_benchmark(aircraft, inputs_type, operating_point_type, in
 
 
 def report_xv15_trim_benchmark(aircraft, inputs_type, operating_point_type, in_plane_state_type, calculate_rotor_flow,
-                               lateral_mast_tilt_deg, lateral_mast_tilt_source):
+                               lateral_mast_tilt_deg, lateral_mast_tilt_source, *, blade_inputs=None):
     result = evaluate_xv15_trim_benchmark(aircraft, inputs_type, operating_point_type, in_plane_state_type, calculate_rotor_flow,
-                                         lateral_mast_tilt_deg, lateral_mast_tilt_source)
+                                         lateral_mast_tilt_deg, lateral_mast_tilt_source, blade_inputs=blade_inputs)
     print(f'XV-15 TRIM BENCHMARK — {TRIM_SOURCE}')
     print('GTRS model trim reference | XV-15 flight validation UNVALIDATED')
     print('80.00 kt | 75.0° nacelle / 15.00° mast | 13,000.0 lb | 589.00 rpm | flap/flaperon 40°/25°')
